@@ -1304,7 +1304,7 @@ class CommandLineAnalyzer:
         if 'Zi' in options:
             raise ExternalDebugInfoError()
 
-        if 'Yc' in options or 'Yu' in options:
+        if ('Yc' in options or 'Yu' in options) and 'Y-' not in options:
             raise CalledWithPchError()
 
         if 'link' in options or 'c' not in options:
