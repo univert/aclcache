@@ -52,6 +52,7 @@
     </Reference>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <Compile Include="mstask.cs" />
     <Compile Include="TimerTask.cs" />
     <Compile Include="AssemblyInfo.cs" />
   </ItemGroup>

@@ -6,6 +6,8 @@
     <UsingTask TaskName="AcadExtension.TimerTask" AssemblyFile="$(AcadExtentionFilePath)"/>
     <UsingTask TaskName="RegexFileUpdate" AssemblyFile="$(AcadExtentionFilePath)"/>
     <UsingTask Condition="$(_USECCACHE) != ''" TaskName="CL" AssemblyFile="$(AcadExtentionFilePath)"/>
+    <UsingTask Condition="$(_USECCACHE) != ''" TaskName="LIB" AssemblyFile="$(AcadExtentionFilePath)"/>
+    <UsingTask Condition="$(_USECCACHE) != ''" TaskName="Link" AssemblyFile="$(AcadExtentionFilePath)"/>
     <PropertyGroup Condition="$(_USECCACHE) != ''">
       <_USENOPCH>1</_USENOPCH>
       <_USENOPDB>1</_USENOPDB>
