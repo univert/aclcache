@@ -6,6 +6,8 @@
     <UsingTask TaskName="Aclcache.TimerTask" AssemblyFile="$(AclcacheFilePath)"/>
     <UsingTask TaskName="RegexFileUpdate" AssemblyFile="$(AclcacheFilePath)"/>
     <UsingTask Condition="$(_USECCACHE) != ''" TaskName="CL" AssemblyFile="$(AclcacheFilePath)"/>
+    <UsingTask Condition="$(_USECCACHE) != ''" TaskName="LIB" AssemblyFile="$(AclcacheFilePath)"/>
+    <UsingTask Condition="$(_USECCACHE) != ''" TaskName="Link" AssemblyFile="$(AclcacheFilePath)"/>
     <PropertyGroup Condition="$(_USECCACHE) != ''">
       <_USENOPCH>1</_USENOPCH>
       <_USENOPDB>1</_USENOPDB>
