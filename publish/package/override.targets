@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-    <UsingTask TaskName="AcadExtension.TimerTask" AssemblyFile="bin\AcadExtension.dll"/>
-    <UsingTask TaskName="RegexFileUpdate" AssemblyFile="bin\AcadExtension.dll"/>
+    <PropertyGroup>
+      <AcadExtentionFilePath Condition="$(AcadExtentionFilePath) == ''">bin\AcadExtension.dll</AcadExtentionFilePath>
+    </PropertyGroup>
+    <UsingTask TaskName="AcadExtension.TimerTask" AssemblyFile="$(AcadExtentionFilePath)"/>
+    <UsingTask TaskName="RegexFileUpdate" AssemblyFile="$(AcadExtentionFilePath)"/>
+    <UsingTask Condition="$(_USECCACHE) != ''" TaskName="CL" AssemblyFile="$(AcadExtentionFilePath)"/>
     <PropertyGroup Condition="$(_USECCACHE) != ''">
       <_USENOPCH>1</_USENOPCH>
       <_USENOPDB>1</_USENOPDB>
