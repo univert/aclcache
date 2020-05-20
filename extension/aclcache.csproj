@@ -42,6 +42,7 @@
     <Reference Include="System.Data" />
     <Reference Include="System.Xml" />
     <Reference Include="Microsoft.Build.Framework" />
+    <Reference Include="Microsoft.Build" />
     <Reference Include="Microsoft.Build.Utilities.Core" />
     <Reference Include="Microsoft.Build.Tasks.Core" />
     <Reference Include="Microsoft.Build.CPPTasks.Common" />
