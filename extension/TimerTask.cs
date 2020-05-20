@@ -37,7 +37,8 @@ namespace AcadExtension
             {
                 case "Start":
                     //MessageBox.Show("", "", MessageBoxButtons.YesNo);
-                    if(!_duration.Start.HasValue)
+                    BuildWorkFlow.Begin(this.BuildEngine);
+                    if (!_duration.Start.HasValue)
                         _duration.Start = DateTime.Now;
                     break;
                 case "BeforeResolveReferences":
@@ -68,8 +69,10 @@ namespace AcadExtension
                 var link = (_duration.AfterLink.Value.Ticks - _duration.BeforeLink.Value.Ticks)/10000000.0;
                 string r = $"{this.Project},{compile},{link},{other}\n";
                 Log.LogMessage(MessageImportance.High, r);
+                
                 if (this.File != null)
                 {
+                    if (Int32.TryParse(this.File, out var _)) return true;
                     int retry = 0;
                         while (true) {
                         try
