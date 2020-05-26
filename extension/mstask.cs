@@ -152,6 +152,20 @@ namespace AcadExtension
             return startInfo;
         }
     }
+
+    public class Timer : IDisposable
+    {
+        private Action<TimeSpan> _action;
+        private DateTime _start = DateTime.Now;
+        public Timer(Action<TimeSpan> a)
+        {
+            _action = a;
+        }
+        public void Dispose()
+        {
+            _action(DateTime.Now - _start);
+        }
+    }
     [Flags] public enum CacheStrategy : Int32
     {
         None = 0,
@@ -282,6 +296,7 @@ namespace AcadExtension
             public HashSet<string> ArtifactsHits = new HashSet<string>();
             public ProjectItemInstance[] Link;
             public ProjectItemInstance[] Lib;
+            public TimeSpan CompileTime, LinkTime, LibTime;
             public DateTime? Start;
             public DateTime? BeforeReferences;
             public DateTime? AfterReferences;
@@ -569,7 +584,7 @@ namespace AcadExtension
 
         public static ProjectInfo Begin(this Microsoft.Build.Framework.IBuildEngine engine)
         {
-           var fullpath = engine.getProp("_requestEntry").getProp("RequestConfiguration").getProp<string>("ProjectFullPath");
+            var fullpath = engine.getProp("_requestEntry").getProp("RequestConfiguration").getProp<string>("ProjectFullPath");
            var reqId = engine.getProp("_requestEntry").getProp("Request").getProp<int>("GlobalRequestId");
            var hash = ProjectInfo.Id(fullpath, reqId);
            if (!_projects.TryGetValue(hash, out var project))
@@ -592,6 +607,7 @@ namespace AcadExtension
                        {
                            project.PostInvokeClcache();
                            LogTiming(entry, project);
+                           _projects.Remove(hash);
                        }
                    }
                }));
@@ -657,17 +673,15 @@ namespace AcadExtension
         private static void LogTiming(this object engine, ProjectInfo project)
         {
 
-            DateTime aftercompile = project.BeforeLink ?? project.BeforeLib ?? DateTime.Now;
             DateTime? starttime = project.Start ?? project.BeforeCompile ?? project.BeforeLib ?? project.BeforeLink;
-            //var other = project.BeforeCompile.HasValue && project.Start.HasValue ? ((project.BeforeCompile.Value.Ticks - project.Start.Value.Ticks)) / 10000000.0 : 0.0;
-            var compile = project.BeforeCompile.HasValue ? (aftercompile.Ticks - project.BeforeCompile.Value.Ticks) / 10000000.0 : 0.0;
-            var link = project.AfterLink.HasValue && project.BeforeLink.HasValue ? (project.AfterLink.Value.Ticks - project.BeforeLink.Value.Ticks) / 10000000.0 : 0.0;
-            var lib = project.AfterLib.HasValue && project.BeforeLib.HasValue ? (project.AfterLib.Value.Ticks - project.BeforeLib.Value.Ticks) / 10000000.0 : 0.0;
+            var compile = project.CompileTime.Ticks / 10000000.0 ;
+            var link = project.LinkTime.Ticks / 10000000.0 ;
+            var lib = project.LibTime.Ticks / 10000000.0 ;
             var other = starttime.HasValue ? (DateTime.Now.Ticks - starttime.Value.Ticks ) / 10000000.0 - compile - link - lib : 0.0;
             string r = (project.State.HasFlag(BuildState.ClCachePreInvoked))?
             $"{project.Desc},{compile},{link},{lib},{other},{project.ArtifactsHits.Count},{project.CompileArtifacts.Count - project.ArtifactsHits.Count}\n"
                 :
-            $"{project.Desc},{compile},{link},{lib},{other},{project.ArtifactsHits.Count},0 \n";
+            $"{project.Desc},{compile},{link},{lib},{other},0,0 \n";
             System.Console.WriteLine(r);
             var file = ProjectProperty(engine, "_statlog");
             if (Int32.TryParse(file, out var _)) return;
@@ -706,6 +720,9 @@ namespace AcadExtension
         public override bool Execute()
         {
             _project = this.BuildEngine.BeginCompile();
+            using var t = new Timer(t => {
+                _project.CompileTime += t ;
+            });
             if (_project.IsOldStyleClcache)
             {
                 this.TrackFileAccess = false;
@@ -815,6 +832,9 @@ namespace AcadExtension
         public override bool Execute()  
         {
             var proj = this.BuildEngine.BeginLink();
+            using var t = new Timer(t => {
+                proj.LinkTime += t;
+            });
             proj.PostInvokeClcache();
             var r = base.Execute();
             this.BuildEngine.AfterLink(proj);
@@ -826,6 +846,9 @@ namespace AcadExtension
         public override bool Execute()
         {
             var proj = this.BuildEngine.BeginLib();
+            using var t = new Timer(t => {
+                proj.LibTime += t;
+            });
             proj.PostInvokeClcache();
             var r = base.Execute();
             this.BuildEngine.AfterLib(proj);
