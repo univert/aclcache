@@ -69,7 +69,8 @@ namespace AcadExtension
         {
         }
 
-        public static string _pythonLocation = Utils.GetPythonLocation();
+        public static string _pythonLocation = Utils.GetPythonLocation("pythonw.exe");
+        public static Lazy<string> _pythonLocation2 = new Lazy<string>( () => Utils.GetPythonLocation());
         public static string _clcacheLocation = Utils.GetClCacheLocation();
         public static Encoding _currentOemEncoding = Encoding.GetEncoding(GetOEMCP());
         public static string GetClCacheLocation()
@@ -84,18 +85,20 @@ namespace AcadExtension
             return AssemblyDirectory;
         }
 
-        public static string GetPythonLocation()
+        public static string GetPythonLocation(string name="python.exe")
         {
+            string a;
             if (Environment.GetEnvironmentVariable("CLCACHE_PYTHON") is string loc &&
-                System.IO.File.Exists(loc))
+                File.Exists(a = Path.Combine(loc, name)))
             {
-                return loc;
+                return a;
             }
 
             var path = Environment.GetEnvironmentVariable("PATH")
                     ?.Split(';')
                     .Where(s => File.Exists(Path.Combine(s, "python.exe")))
                     .FirstOrDefault();
+            if (path != null) path = Path.Combine(path, "python.exe");
             path = path ?? "python.exe";
             return path;
         }
@@ -352,7 +355,6 @@ namespace AcadExtension
             public int InvokeClCache(string switches, out string result , bool wait = true)
             {
                 var proc = new System.Diagnostics.Process();
-
                 var cmdline = $" {_clcacheLocation}\\clcache.py {switches}";
                 proc.StartInfo = Utils.GetProcessStartInfo(_pythonLocation, cmdline, false);
 
@@ -420,7 +422,7 @@ namespace AcadExtension
                 }
                 if (System.IO.File.Exists(tmpfile))
                 {
-                    var exitcode = InvokeClCache($"-p {tmpfile} -b {PathToCL}", out var ret);
+                    var exitcode = InvokeClCache($"-p {tmpfile} -b {PathToCL} -f {Desc}", out var ret);
                     if (exitcode == 0)
                     {
                         var lines = ret.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
@@ -458,7 +460,7 @@ namespace AcadExtension
                 }
                 if (something)
                 {
-                    InvokeClCache($"-q {tmpfile} -b {PathToCL}", out var ret, false);
+                    InvokeClCache($"-q {tmpfile} -b {PathToCL} -f {Desc}", out var ret, false);
                 }
                 else
                 {
@@ -466,7 +468,7 @@ namespace AcadExtension
                 }
             }
             public bool IsOldStyleClcache => Strategy.HasFlag(UseCCache) && Strategy.HasFlag(UseNoPch) && (Strategy.HasFlag(UseNoPdb) || Strategy.HasFlag(UseZ7));
-            public bool IsNewStyleClcache => Strategy.HasFlag(UseCCache) && !Strategy.HasFlag(UseNoPch) && !Strategy.HasFlag(CacheStrategy.UseNoPdb);
+            public bool IsNewStyleClcache => Strategy.HasFlag(UseCCache) && !Strategy.HasFlag(UseNoPch);
 
             internal void SetCurrentEngine(IBuildEngine engine)
             {
@@ -485,11 +487,15 @@ namespace AcadExtension
 
         static BuildWorkFlow()
         {
-            DebugHook();
+            Int32.TryParse(g_Aedebug, out g_aedebug);
+            DebugHook(1);
         }
-        public static void DebugHook()
+
+        private static string g_Aedebug = Environment.GetEnvironmentVariable("_aedebug");
+        private static int g_aedebug = 0;
+        public static void DebugHook(int level = 1)
         {
-            if (null != Environment.GetEnvironmentVariable("_aedebug"))
+            if (g_aedebug == level)
             {
                 while (true)
                 {
@@ -618,6 +624,7 @@ namespace AcadExtension
         }
         public static ProjectInfo BeginCompile(this Microsoft.Build.Framework.IBuildEngine engine)
         {
+            DebugHook(2);
             var project = Begin(engine);
             if (project.BeforeCompile == null)
             {
@@ -820,9 +827,9 @@ namespace AcadExtension
             var pinfo = base.GetProcessStartInfo(pathToTool, commandLineCommands, responseFileSwitch);
             if (_project.IsOldStyleClcache)
             {
-                pinfo.FileName = _pythonLocation;
+                pinfo.FileName = _pythonLocation2.Value;
                 pinfo.Arguments = $" {_clcacheLocation}\\clcache.py " + pinfo.Arguments;
-                LogToolCommand(_pythonLocation + pinfo.Arguments);
+                LogToolCommand(_pythonLocation2.Value + pinfo.Arguments);
             }
             return pinfo;
         }
@@ -831,6 +838,7 @@ namespace AcadExtension
     {
         public override bool Execute()  
         {
+            BuildWorkFlow.DebugHook(3);
             var proj = this.BuildEngine.BeginLink();
             using var t = new Timer(t => {
                 proj.LinkTime += t;
@@ -845,6 +853,7 @@ namespace AcadExtension
     {
         public override bool Execute()
         {
+            BuildWorkFlow.DebugHook(4);
             var proj = this.BuildEngine.BeginLib();
             using var t = new Timer(t => {
                 proj.LibTime += t;
