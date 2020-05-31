@@ -3,16 +3,14 @@
     <PropertyGroup>
       <AclcacheFilePath Condition="$(AclcacheFilePath) == ''">bin\aclcache.dll</AclcacheFilePath>
     </PropertyGroup>
-    <UsingTask TaskName="Aclcache.TimerTask" AssemblyFile="$(AclcacheFilePath)"/>
-    <UsingTask TaskName="RegexFileUpdate" AssemblyFile="$(AclcacheFilePath)"/>
-    <UsingTask Condition="$(_USECCACHE) != ''" TaskName="CL" AssemblyFile="$(AclcacheFilePath)"/>
-    <UsingTask Condition="$(_USECCACHE) != ''" TaskName="LIB" AssemblyFile="$(AclcacheFilePath)"/>
-    <UsingTask Condition="$(_USECCACHE) != ''" TaskName="Link" AssemblyFile="$(AclcacheFilePath)"/>
     <PropertyGroup Condition="$(_USECCACHE) != ''">
-      <_USENOPCH>1</_USENOPCH>
-      <_USENOPDB>1</_USENOPDB>
       <_USEBREPRO>1</_USEBREPRO>
     </PropertyGroup>
+    <UsingTask Condition="$(_USECCACHE) != '' or $(_STATLOG) != ''" TaskName="AcadExtension.TimerTask" AssemblyFile="$(AclcacheFilePath)"/>
+    <UsingTask Condition="$(_USEBREPRO) != ''" TaskName="RegexFileUpdate" AssemblyFile="$(AclcacheFilePath)"/>
+    <UsingTask Condition="$(_USECCACHE) != '' or $(_STATLOG) != ''" TaskName="CL" AssemblyFile="$(AclcacheFilePath)"/>
+    <UsingTask Condition="$(_USECCACHE) != '' or $(_STATLOG) != ''" TaskName="LIB" AssemblyFile="$(AclcacheFilePath)"/>
+    <UsingTask Condition="$(_USECCACHE) != '' or $(_STATLOG) != ''" TaskName="Link" AssemblyFile="$(AclcacheFilePath)"/>
     <ItemDefinitionGroup Condition="$(_USENOPCH) == '1'">
       <ClCompile>
         <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -29,6 +27,15 @@
       <DebugType Condition="$(_USENOPDB) == '1'">None</DebugType>
     </PropertyGroup>
     <ItemDefinitionGroup>
+        <ClCompile Condition="$(_USEZ7) == '1'">
+           <DebugInformationFormat>OldStyle</DebugInformationFormat>
+        </ClCompile>
+        <Link  Condition="$(_USEZ7) == '1'">
+          <!--LinkTimeCodeGeneration></LinkTimeCodeGeneration-->
+          <OptimizeReferences Condition="$(MixedMode) != 'true' and '$(Configuration)'=='Debug'">false</OptimizeReferences>
+          <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
+          <StripPrivateSymbols Condition="$(Configuration)=='Debug'"></StripPrivateSymbols>
+        </Link>
         <ClCompile Condition="$(_USENOPDB) == '1'">
            <DebugInformationFormat>None</DebugInformationFormat>
            <ProgramDataBaseFileName></ProgramDataBaseFileName>
@@ -59,23 +66,8 @@
       <ForceRebuild>true</ForceRebuild>
   </PropertyGroup>
    <!--These targets are to record compile and linke time seperately-->
-  <Target Name="__Start" BeforeTargets="_PrepareForBuild;BeforeBuild;_PrepareForRebuild">
+  <Target Condition="$(_USECCACHE) != '' or $(_STATLOG) != ''" Name="__Start" BeforeTargets="_PrepareForBuild;BeforeBuild;_PrepareForRebuild;PrepareForBuild">
     <TimerTask Project="$(MSBuildProjectFullPath)" Reason="Start"/>  
-  </Target>
-  <Target Name="__BeforeResolveReferences" BeforeTargets="BeforeResolveReferences">
-    <TimerTask Project="$(MSBuildProjectFullPath)" Reason="BeforeResolveReferences"/>  
-  </Target>
-  <Target Name="__AfterResolveReferences" AfterTargets="AfterResolveReferences">
-    <TimerTask Project="$(MSBuildProjectFullPath)" Reason="AfterResolveReferences"/>  
-  </Target>
-  <Target Name="__BeforeCompile" BeforeTargets="BuildCompile" AfterTargets="BuildGenerateSources">
-    <TimerTask Project="$(MSBuildProjectFullPath)" Reason="BeforeCompile"/>  
-  </Target>
-  <Target Name="__BeforeLink" BeforeTargets="BuildLink" AfterTargets="BuildCompile">
-    <TimerTask Project="$(MSBuildProjectFullPath)" Reason="BeforeLink"/>  
-  </Target>
-  <Target Name="__AfterLink" AfterTargets="BuildLink">
-    <TimerTask Project="$(MSBuildProjectFullPath)" Reason="AfterLink" File="$(_statlog)"/>  
   </Target>
   <Target Name="__BeforeResourceCompile" BeforeTargets="BeforeResourceCompile" Condition="$(_USEBREPRO) == '1'">
       <ItemGroup>
@@ -96,6 +88,15 @@
     <ItemGroup>
       <Compile Remove="@(AssemblyInfo)" />
       <Compile Include="@(NewAssemblyInfo)" />
+    </ItemGroup>
+  </Target>
+  <Target Name="__Remove_pch" BeforeTargets="ClCompile" DependsOnTargets="" Condition="$(_USENOPCH) == '1'">
+    <ItemGroup>
+      <ClCompile>
+        <PrecompiledHeader>NotUsing</PrecompiledHeader>
+        <PrecompiledHeaderFile></PrecompiledHeaderFile>
+        <PrecompiledHeaderOutputFile></PrecompiledHeaderOutputFile>
+      </ClCompile>
     </ItemGroup>
   </Target>
 </Project>
