@@ -309,6 +309,7 @@ namespace AcadExtension
             public DateTime? BeforeLib;
             public DateTime? AfterLib;
             public BuildState State { get; set; } = BuildState.CompilerNotInvoked;
+            public bool CompileSuccess { get; set; } = true;
             public bool CompileArtifactCollected { get; set; } = false;
             private IBuildEngine CurrentEngine;
             public CacheStrategy Strategy { get; set; } = CacheStrategy.None;
@@ -338,6 +339,7 @@ namespace AcadExtension
                 foreach (var item in ClCompile)
                 {
                     var taskitem = item.getProp<ITaskItem>("_taskItem");
+                    if (taskitem.GetMetadata("ExcludedFromBuild") == "true") continue;
                     var cl = new Microsoft.Build.CPPTasks.CL();
                     var trackedVCToolTaskInterfaceHelper =
                         new TrackedVCToolTaskInterfaceHelper(cl, typeof(Microsoft.Build.CPPTasks.CL));
@@ -439,7 +441,8 @@ namespace AcadExtension
 
             public virtual void PostInvokeClcache()
             {
-                if ( !State.HasFlag(BuildState.ClCachePreInvoked) || !State.HasFlag(BuildState.CompileFinished) || State.HasFlag(BuildState.ClCachePostInvoked)) 
+                if ( !State.HasFlag(BuildState.ClCachePreInvoked) || !State.HasFlag(BuildState.CompileFinished) 
+                    || State.HasFlag(BuildState.ClCachePostInvoked) || !CompileSuccess ) 
                     return;
 
                 State |= BuildState.ClCachePostInvoked;
@@ -752,6 +755,7 @@ namespace AcadExtension
                 PostProcess();
                 _project.State |= BuildState.CompileFinished;
             }
+            _project.CompileSuccess &= r;
             return r;
         }
 
