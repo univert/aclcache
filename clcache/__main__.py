@@ -9,7 +9,7 @@
 import sys, os, re, hashlib, json, subprocess, threading, pickle, multiprocessing, gzip, errno, contextlib, concurrent.futures, codecs, functools,time
 from collections import defaultdict, namedtuple
 from ctypes import windll, wintypes, create_unicode_buffer, byref
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, InitVar
 from shutil import copyfile, copyfileobj, rmtree, which
 from tempfile import TemporaryFile
 from typing import Any, List, Tuple, Iterator
@@ -248,7 +248,7 @@ class ManifestRepository:
     # invalidation, such that a manifest that was stored using the old format is not
     # interpreted using the new format. Instead the old file will not be touched
     # again due to a new manifest hash and is cleaned away after some time.
-    MANIFEST_FILE_FORMAT_VERSION = 8
+    MANIFEST_FILE_FORMAT_VERSION = 9
 
     def __init__(self, manifestsRootDir):
         self._manifestsRootDir = manifestsRootDir
@@ -781,6 +781,8 @@ class StatisticsMixin:
         'FailureGetObj',
         'AddObjCount',
         'AddObjSize',
+        'AddEntryCount',
+        'IdenticalEntryCount',
         'DuplicateManifestEntryFound',
         'CleanUpCount',
         'DependencyMissingCount',
@@ -1625,6 +1627,8 @@ def printStatistics2(cache):
 
       diagnostics
         #entry modified         : {stats.DuplicateManifestEntryFound}
+        #identical entry found  : {stats.IdenticalEntryCount}
+        #add entry              : {stats.AddEntryCount}
         #duplicate objs found   : {stats.DuplicateObjHashFound}
         #add objs               : {stats.AddObjCount}
         add objs size           : {AddObjSize:.2f} MB
@@ -1672,7 +1676,7 @@ def resetStatistics(cache):
 def cleanCache(cache):
     with cache.lock, cache.statistics.lock, cache.statistics as stats, cache.configuration as cfg:
         stats.incCleanUpCount()
-        cache.clean(stats, cfg.maximumCacheSize())
+        #cache.clean(stats, cfg.maximumCacheSize())
 
 
 def clearCache(cache):
@@ -1837,21 +1841,41 @@ def parse_input(args):
     delete_tmp_file(args[0])
     content = [x.strip() for x in content.split('^^')]
     content = [x.split('|') for x in content if x.strip()]
-    content = sorted(content, key=lambda x: x[1], reverse=True)
+    content = sorted(content, key=lambda x: x[2], reverse=True)
     return [CompilerItem(*x) for x in content]
 
 #CompilerEntry = namedtuple('CompilerEntry', ['file', 'project', 'cmdline', 'output' , 'dependency', 'dependency_hash'])
 
 @dataclass
 class CompilerEntry:
-    file: str;project: str;cmdline: str;output: List;dependency: List; dependency_hash: str
+    manifest_hash: str =None;
+    parent_hash: str = None;
+    file: str =None;project: str= None;compiler:str= None; cmdline: str =None;
+    output: List =None;
+    parent:  InitVar[object] = None;
+    dependency_hash: str=None;dependency: List= None;
     def _asdict(self):
         return asdict(self)
+
+    def __post_init__(self, parent):
+        if not self.dependency_hash:
+            self.dependency_hash = self.generate_dependency_hash(self.dependency)
+        if parent:
+            self.parent_hash = '|'.join( (parent.entry.manifest_hash, parent.entry.dependency_hash) )
+
+    def match_local(self):
+        return self.dependency_hash == self.generate_dependency_hash(self.dependency)
+
+    @staticmethod
+    def generate_dependency_hash(files):
+        return ManifestRepository.getIncludesContentHashForFiles(files)
+
 
 @functools.lru_cache(maxsize=16)
 def cmd_normalize(cmdline):
     return re.subn('\s{2,}/', ' /', cmdline)[0]
 
+pch_dp_map = dict()
 
 @dataclass
 class CompilerItem(Statistics):
@@ -1860,20 +1884,30 @@ class CompilerItem(Statistics):
     cmdline: str
     dependency: List[str] = None
     output: List[str] = None
-    hit : bool = None
+    entry : bool = None
+    hash: str = None
+    parent = None
 
     @classmethod
     def set_compiler(cls, compiler):
         cls.compiler_hash = getCompilerHash(compiler)
     def __post_init__(self):
-        self.dependency = self.dependency.split('*') if self.dependency else []
         if self.pch_hdr:
             self.pch_hdr = self.pch_hdr.strip().strip('"').upper()
+        dependency = self.dependency.split('*') if self.dependency else []
         if self.is_usePch():
-            self.dependency = sorted(set( (x for x in self.dependency if not x.endswith('.PCH') ) ))
+            dependency = set((x for x in dependency if not x.endswith('.PCH')))
         else:
-            self.dependency = sorted(set(self.dependency))
-        self.output = self.output.split('*') if self.output else []
+            dependency = set(dependency)
+
+        if self.is_genPch():
+            assert self.pch_hdr not in pch_dp_map
+            pch_dp_map[self.pch_hdr] = self
+        elif self.is_usePch():
+            self.parent = pch_dp_map[self.pch_hdr]
+
+        self.dependency = sorted(dependency)
+        self.output = sorted(self.output.split('*') if self.output else [])
         self.cmdline = cmd_normalize(self.cmdline)
 
     def is_genPch(self):
@@ -1882,13 +1916,16 @@ class CompilerItem(Statistics):
         return self.pch_state == '1'
 
     def manifest_hash(self):
-        additionalData = "{}|{}|{}|{}".format(self.compiler_hash, self.cmdline,self.full_path, ManifestRepository.MANIFEST_FILE_FORMAT_VERSION)
-        hash = getFileHash(self.full_path, additionalData)
-        return hash
+        if self.hash: return self.hash
+        additionalData = [self.compiler_hash, self.cmdline,self.full_path, str(ManifestRepository.MANIFEST_FILE_FORMAT_VERSION)]
+        if self.parent:
+            additionalData += [self.parent.manifest_hash(), self.parent.entry.dependency_hash ]
+        self.hash = getFileHash(self.full_path, '|'.join(additionalData))
+        return self.hash
 
     def manifest_hit(self, cache):
-        if self.hit is not None:
-            return self.hit
+        if self.entry is not None:
+            return self.entry
         manifest_hash = self.manifest_hash()
         manifest = None
         with cache.manifestLockFor(manifest_hash):
@@ -1896,24 +1933,23 @@ class CompilerItem(Statistics):
         if manifest:
             self.incHashHits()
             printTraceStatement("manifest hash Hit: {} {}".format(self.full_path, manifest_hash))
-            self.hit = self.manifest_search(manifest)
-            if self.hit:
+            self.entry = self.manifest_search(manifest)
+            if self.entry:
                 self.incEntryHits()
-                printTraceStatement("manifest Entry Hit: {} {}".format(self.full_path, self.hit.dependency_hash))
+                printTraceStatement("manifest Entry Hit: {} {}".format(self.full_path, self.entry.dependency_hash))
             else:
                 self.incEntryMiss()
                 printTraceStatement("manifest Entry Miss: {}".format(self.full_path))
         else:
             self.incHashMiss()
             printTraceStatement("manifest hash Miss: {}".format(self.full_path))
-            self.hit = False
-        return self.hit
+            self.entry = False
+        return self.entry
 
     def manifest_search(self, manifest):
         for entry in manifest.entries():
             try:
-                dependency_hash = ManifestRepository.getIncludesContentHashForFiles(entry.dependency)
-                if entry.dependency_hash == dependency_hash:
+                if entry.match_local():
                     return entry
             except IncludeNotFoundException:
                 self.incDependencyMissingCount()
@@ -1931,12 +1967,12 @@ class CompilerItem(Statistics):
         assert self.output
         hashes = getFileHashes(self.dependency)
          #safeIncludes = [collapseBasedirToPlaceholder(path) for path in sortedIncludePaths]
-        dependency_hash = ManifestRepository.getIncludesContentHashForHashes(hashes)
         output = [ list(y) for y in  zip(self.output, [getFileHash(x) for x in self.output]) ]
-        entry = CompilerEntry(file=self.full_path, cmdline=self.cmdline,
+        self.entry = CompilerEntry(manifest_hash = self.manifest_hash(),
+            file=self.full_path, cmdline=self.cmdline,
                               output=output, dependency=self.dependency,
-                              dependency_hash=dependency_hash, project=g_project_name)
-        return entry
+                              dependency_hash=None, project=g_project_name, compiler=self.compiler_hash, parent=self.parent)
+        return self.entry
 
     def ensure_output(self, cache):
         entry = self.manifest_entry()
@@ -1946,20 +1982,22 @@ class CompilerItem(Statistics):
             add_success |= (size > 0)
             if not add_success: break
         if not add_success: return
-        manifest_hash = self.manifest_hash()
+        manifest_hash = entry.manifest_hash
         with cache.manifestLockFor(manifest_hash):
             manifest = cache.getManifest(manifest_hash) or (Manifest(), self.incManifestCount())[0]
             found = next((x for x in manifest.entries() if x.dependency_hash == entry.dependency_hash), None)
             if not found:
                 manifest.addEntry(entry)
                 self.incManifestEntryCount()
+                self.incAddEntryCount()
                 cache.setManifest(manifest_hash, manifest)   #entry added
             elif found.output != entry.output:
                 self.incDuplicateManifestEntryFound()
-                entry.output = found.output
+                found.output = entry.output
                 cache.setManifest(manifest_hash, manifest)   #entry replaced
                 printTraceStatement("Duplicate entry found for {}".format(entry.file))
             else:
+                self.incIdenticalEntryCount()
                 printTraceStatement("Identical entry found for {}".format(entry.file))
         return
 
@@ -2003,13 +2041,13 @@ def delete_tmp_file(path):
         os.remove(path)
 
 def processPreInvoke(cache, args, compiler):
+    printTraceStatement("PreInvoke {}".format(windll.kernel32.GetCommandLineW()))
     with cache.statistics.lock, cache.statistics as stats:
         stats.incPreInvokeLauchCount()
-    printTraceStatement("PreInvoke {}".format(windll.kernel32.GetCommandLineW()))
+    skip_pre = 'CLCACHE_FORCEMISS' in os.environ
     CompilerItem.set_compiler(compiler)
     content = parse_input(args)
-    miss = set()
-    content = sorted(content, key= lambda x: x.pch_state, reverse=True)
+    miss = set(content) if skip_pre else set()
     for item in content:
         if item in miss: continue
         if not item.manifest_hit(cache):
@@ -2028,10 +2066,7 @@ def processPreInvoke(cache, args, compiler):
         if not success:
             miss.add(item)
     hits -= miss
-    if hits:
-        print("*".join((x.item_spec for x in hits)), end='')
-    else:
-        print('\n')
+    print("*".join((x.item_spec for x in hits)), end='*')
     with cache.statistics.lock, cache.statistics as stats:
         if miss:
             stats.incProjectMiss()
@@ -2046,25 +2081,26 @@ def processPreInvoke(cache, args, compiler):
 
 
 def processPostInvoke(cache, args, compiler):
+    printTraceStatement("PostInvoke {}".format(windll.kernel32.GetCommandLineW()))
+    cacheSize = 0
+    cleanup = False
     with cache.statistics.lock, cache.statistics as stats:
         stats.incPostInvokeLauchCount()
-    printTraceStatement("PostInvoke {}".format(windll.kernel32.GetCommandLineW()))
-    CompilerItem.set_compiler(compiler)
-    content = parse_input(args)
-    for item in content:
-        item.ensure_output(cache)
-    cleanup = False;
-
-    cacheSize = 0
-    with cache.statistics.lock, cache.statistics as stats:
-        stats.updateStats(CompilerItem)
         cacheSize = stats.currentCacheSize()
     with cache.configuration as cfg:
-        cleanup =  cacheSize >= cfg.maximumCacheSize()
+        cleanup = cacheSize >= cfg.maximumCacheSize()
+
+    CompilerItem.set_compiler(compiler)
+    content = parse_input(args)
     if cleanup:
-        printTraceStatement('Cache size {} limit reached. Start cleaning.')
+        printTraceStatement('Cache size {} limit reached. Need cleaning.'.format(cacheSize))
         cleanCache(cache)
+    else:
+        for item in content:
+            item.ensure_output(cache)
+
     with cache.statistics.lock, cache.statistics as stats:
+        stats.updateStats(CompilerItem)
         stats.incPostInvokeExitCount()
         alltime, cputime = diff_time()
         stats.incPostInvokeExecutionTime(alltime)

@@ -48,7 +48,7 @@ class HashCache:
 
     def _onPathChange(self, handle, filename, events, error):
         watchedDirectory = self._watchedDirectories[handle.path]
-        logging.debug("detected modifications in %s", handle.path)
+        logging.info("detected modifications in %s", handle.path)
         if filename in watchedDirectory:
             logging.debug("invalidating cached hashsum for %s", os.path.join(handle.path, filename))
             del watchedDirectory[filename]
@@ -62,7 +62,7 @@ class HashCache:
         # rely on the internal cacheing of re.match
         excluded = any(re.search(pattern, dirname, re.IGNORECASE) for pattern in self._excludePatterns)
         if excluded:
-            logging.debug("NOT watching %s", dirname)
+            logging.info("NOT watching %s", dirname)
         return excluded
 
 
