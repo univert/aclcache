@@ -11,6 +11,7 @@ clcache.spec
 /.venv
 /publish/*.nupkg
 .vs/
+.idea/
 /extension/obj/
 /extension/bin
 __pycache__/
