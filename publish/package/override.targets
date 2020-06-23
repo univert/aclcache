@@ -21,13 +21,15 @@
     <PropertyGroup>
       <USRLFLAGS Condition="$(_USENOPDB) == '1'">$(USRLFLAGS.Replace('/PROFILE', ''))</USRLFLAGS> <!--/PROFILE will generate pdb-->
       <ImpLibAdditionalOptions  Condition="$(_USEBREPRO) == '1'">$(ImpLibAdditionalOptions) /Brepro</ImpLibAdditionalOptions>
-      <_BREPRO  Condition="$(_USEBREPRO) == '1'">/Brepro</_BREPRO>
+      <_BREPRO  Condition="$(_USEBREPRO) == '1'">/experimental:deterministic</_BREPRO>
+      <USRCFLAGS_CLR  Condition="$(MixedMode) != 'true' and $(_USEBREPRO) == '1'">$(USRCFLAGS_CLR) /Brepro</USRCFLAGS_CLR>
       <Deterministic  Condition="$(_USEBREPRO) == '1'">true</Deterministic>
       <DebugSymbols  Condition="$(_USENOPDB) == '1'">false</DebugSymbols>
       <DebugType Condition="$(_USENOPDB) == '1'">None</DebugType>
     </PropertyGroup>
     <ItemDefinitionGroup>
         <ClCompile Condition="$(_USEZ7) == '1'">
+           <WholeProgramOptimization Condition="'$(Configuration)'=='Debug'">false</WholeProgramOptimization>
            <DebugInformationFormat>OldStyle</DebugInformationFormat>
         </ClCompile>
         <Link  Condition="$(_USEZ7) == '1'">
@@ -37,6 +39,7 @@
           <StripPrivateSymbols Condition="$(Configuration)=='Debug'"></StripPrivateSymbols>
         </Link>
         <ClCompile Condition="$(_USENOPDB) == '1'">
+           <WholeProgramOptimization Condition="'$(Configuration)'=='Debug'">false</WholeProgramOptimization>
            <DebugInformationFormat>None</DebugInformationFormat>
            <ProgramDataBaseFileName></ProgramDataBaseFileName>
            <SupportJustMyCode>false</SupportJustMyCode>
@@ -50,13 +53,14 @@
         </Link>
         <!--/PROFILE use /BREPRO to produce identical outputs from same source code-->
         <ClCompile Condition="$(_USEBREPRO) == '1'">
-           <AdditionalOptions>%(AdditionalOptions) /Brepro</AdditionalOptions>
+           <AdditionalOptions Condition="'%(CompileAsManaged)' != 'true'" >%(AdditionalOptions) /wd5048 /experimental:deterministic</AdditionalOptions>
+           <AdditionalOptions Condition="'%(CompileAsManaged)' == 'true'" >%(AdditionalOptions) /Brepro</AdditionalOptions>
         </ClCompile>
         <Link Condition="$(_USEBREPRO) == '1'">
-          <AdditionalOptions>%(AdditionalOptions) /Brepro</AdditionalOptions>
+          <AdditionalOptions>%(AdditionalOptions) /experimental:deterministic</AdditionalOptions>
         </Link>
         <Lib Condition="$(_USEBREPRO) == '1'">
-          <AdditionalOptions>%(AdditionalOptions) /Brepro</AdditionalOptions>
+          <AdditionalOptions>%(AdditionalOptions) /experimental:deterministic</AdditionalOptions>
         </Lib>
         <MASM  Condition="$(_USEBREPRO) == '1'">
            <AdditionalOptions>%(AdditionalOptions) /Brepro</AdditionalOptions>
@@ -89,6 +93,13 @@
       <Compile Remove="@(AssemblyInfo)" />
       <Compile Include="@(NewAssemblyInfo)" />
     </ItemGroup>
+  </Target>
+  <Target Name="__Remove_ae" BeforeTargets="ClCompile" DependsOnTargets="" Condition="$(UseMultiToolTask) == 'true'">
+      <ItemGroup>
+      <ClCompile>
+        <MultiToolTaskDependency  Condition="'%(ClCompile.PrecompiledHeaderFile)' != ''">@(ClCompilePCH->'%(PchSource)')</MultiToolTaskDependency>
+        </ClCompile>
+     </ItemGroup>
   </Target>
   <Target Name="__Remove_pch" BeforeTargets="ClCompile" DependsOnTargets="" Condition="$(_USENOPCH) == '1'">
     <ItemGroup>

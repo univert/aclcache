@@ -1,6 +1,6 @@
 # We often don't use all members of all the pyuv callbacks
 # pylint: disable=unused-argument
-import hashlib
+import sys, hashlib
 import logging
 import os
 import pickle
@@ -17,6 +17,7 @@ class HashCache:
         self._handlers = []
         self._excludePatterns = excludePatterns or []
         self._disableWatching = disableWatching
+        self._count = 0
 
     def getFileHash(self, path):
         logging.debug("getting hash for %s", path)
@@ -39,6 +40,7 @@ class HashCache:
         self._watchedDirectories[dirname] = watchedDirectory
 
         logging.debug("calculated and stored hashsum %s", hashsum)
+        self._count += 1
         return hashsum
 
     def _startWatching(self, dirname):
@@ -51,6 +53,7 @@ class HashCache:
         logging.info("detected modifications in %s", handle.path)
         if filename in watchedDirectory:
             logging.debug("invalidating cached hashsum for %s", os.path.join(handle.path, filename))
+            self._count -= len(watchedDirectory[filename])
             del watchedDirectory[filename]
 
     def __del__(self):
@@ -85,6 +88,16 @@ class Connection:
             except OSError as e:
                 response = b'!' + pickle.dumps(e)
             pipe.write(response + b'\x00', self._onWriteDone)
+        elif self._readBuffer.endswith(b'\x01'):
+            data = self._readBuffer[:-1].decode('utf-8').splitlines()
+            if data:
+                self.__class__.__dict__[data[0]](self, pipe)
+    def close(self, pipe):
+        logging.info('exit command')
+        sys.exit(0)
+
+    def count(self, pipe):
+        pipe.write( str(self._cache._count).encode('utf-8') + b'\x00', self._onWriteDone )
 
     def _onWriteDone(self, pipe, error):
         logging.debug("sent response to client, closing connection")

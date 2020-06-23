@@ -8,7 +8,7 @@
     <ns0:description>Compiler Cache for MSVC</ns0:description>
   </ns0:metadata>
   <files>
-    <file src="override.targets;initialize.bat;finish.bat"  />
+    <file src="override.targets;initialize.bat;finish.bat;md5deep64.exe;compare.bat"  />
     <file src="..\..\*.py" target="bin" />
     <file src="..\..\extension\bin\Release\*.dll" target="bin" />
     <file exclude="**\*.pyc" src="..\..\clcache\**" target="bin\clcache" />
