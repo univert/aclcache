@@ -1,12 +1,10 @@
 @echo off
 
-@echo *** MSBUILD OVERRIDES to disable PDB / enable deterministic build / enable ccache[clcache]
-
 if "%_USENOPDB%"=="" if "%_USENOPCH%"=="" if "%_USEBREPRO%"=="" if "%_USECCACHE%"=="" if "%_USEZ7%"== "" (
-    @echo *** OVERRIDES is NOT enbaled
-    goto END
+    goto :eof
 )
 
+@echo *** MSBUILD OVERRIDES to disable PDB / enable deterministic build / enable ccache[clcache]
 
 if "%CustomBeforeMicrosoftCommonTargets%" == "" (
     set CustomBeforeMicrosoftCommonTargets=%~dp0override.targets
@@ -64,6 +62,9 @@ if "%CLCACHE_SERVER%" == "2" (
 if not "%CLCACHE_RESET%" == "" (
    "%CLCACHE_PYTHON%\python.exe" "%CLCACHE_LOCATION%\clcache.py" --reset
 )
+if not "%CLCACHE_CLEAR%" == "" (
+   "%CLCACHE_PYTHON%\python.exe" "%CLCACHE_LOCATION%\clcache.py" -C
+)
 
 :END
 @echo CustomBeforeMicrosoftCommonTargets=%CustomBeforeMicrosoftCommonTargets%
@@ -79,3 +80,4 @@ if not "%CLCACHE_RESET%" == "" (
 @echo CLCACHE_PYTHON=%CLCACHE_PYTHON%
 @echo CLCACHE_SERVER=%CLCACHE_SERVER%
 @echo CLCACHE_SIZE=%CLCACHE_SIZE%
+@echo CLCACHE_RESET=%CLCACHE_RESET%

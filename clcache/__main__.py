@@ -14,6 +14,7 @@ from shutil import copyfile, copyfileobj, rmtree, which
 from tempfile import TemporaryFile
 from typing import Any, List, Tuple, Iterator
 from atomicwrites import atomic_write
+from argparse import ArgumentParser
 
 VERSION = "5.0-dev"
 
@@ -788,6 +789,7 @@ class StatisticsMixin:
         'DependencyMissingCount',
         'ProjectHits',
         'ProjectMiss',
+        'HashCompareFailure',
     }
     NEW_PERSIST_KEYS = {
         'ManifestCount',
@@ -1030,25 +1032,39 @@ def getCompilerHash(compilerBinary):
     return hasher.hexdigest()
 
 
+def write_pipe(*items, read = True):
+    pipeName = r'\\.\pipe\clcache_srv'
+    while True:
+        try:
+            with open(pipeName, 'w+b') as f:
+                f.write(b''.join(items))
+                response = f.read() if read else b''
+                if response.startswith(b'!'):
+                    raise pickle.loads(response[1:-1])
+                return response
+        except FileNotFoundError as e:
+            if e.filename == pipeName:
+                start_server(False)
+            else:
+                raise
+        except OSError as e:
+            if e.errno == errno.EINVAL and windll.kernel32.GetLastError() == ERROR_PIPE_BUSY:
+                windll.kernel32.WaitNamedPipeW(pipeName, NMPWAIT_WAIT_FOREVER)
+            else:
+                raise
+
+g_use_clserver = 'CLCACHE_SERVER' in os.environ
 def getFileHashes(filePaths):
-    if 'CLCACHE_SERVER' in os.environ:
-        pipeName = r'\\.\pipe\clcache_srv'
-        while True:
-            try:
-                with open(pipeName, 'w+b') as f:
-                    f.write('\n'.join(filePaths).encode('utf-8'))
-                    f.write(b'\x00')
-                    response = f.read()
-                    if response.startswith(b'!'):
-                        raise pickle.loads(response[1:-1])
-                    return response[:-1].decode('utf-8').splitlines()
-            except OSError as e:
-                if e.errno == errno.EINVAL and windll.kernel32.GetLastError() == ERROR_PIPE_BUSY:
-                    windll.kernel32.WaitNamedPipeW(pipeName, NMPWAIT_WAIT_FOREVER)
-                else:
-                    raise
+    if g_use_clserver:
+        r = write_pipe('\n'.join(filePaths).encode('utf-8'), b'\x00')
+        return r[:-1].decode('utf-8').splitlines()
     else:
         return [getFileHash(filePath) for filePath in filePaths]
+
+def control_server(*code, read = False):
+    r = write_pipe('\n'.join(code).encode('utf-8'), b'\x01', read=read)
+    if read:
+        return r[:-1].decode('utf-8')
 
 
 def getFileHash(filePath, additionalData=None):
@@ -1635,6 +1651,7 @@ def printStatistics2(cache):
         #failure add obj        : {stats.FailureAddObj}
         #header file missing    : {stats.DependencyMissingCount}
         #cache cleanup          : {stats.CleanUpCount}
+        #hash compare failure   : {stats.HashCompareFailure}
       run statistics
         #preinvoke launch       : {stats.PreInvokeLauchCount}
         #preinvoke exit         : {stats.PreInvokeExitCount}
@@ -1765,10 +1782,18 @@ def createManifestEntry(manifestHash, includePaths):
 
     return ManifestEntry(safeIncludes, includesContentHash, cachekey)
 
+def start_server(close = True):
+    if close:
+        try:
+            control_server('close')
+        except:pass
+    dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + r'\clcachesrv.py'
+    executable = sys.executable.replace('python.exe','pythonw.exe')
+    subprocess.Popen([executable, dir],executable=executable, creationflags=0x08000000)
+
 windll.kernel32.GetCommandLineW.restype = wintypes.LPCWSTR
 
 def _main():
-    from argparse import ArgumentParser
     parser = ArgumentParser()
     parser.add_argument('-s', '--stat', action='store_true', help='print cache statistics')
     parser.add_argument('-c', '--clean', dest='clean', action='store_true', help='Cache cleaned')
@@ -1780,6 +1805,9 @@ def _main():
     parser.add_argument('-p', '--prepare', action='store_true')
     parser.add_argument('-q', '--collect', action='store_true')
     parser.add_argument('-d', '--debug', action='store_true')
+    parser.add_argument('-E', '--exit_svr', action='store_true')
+    parser.add_argument('-S', '--start_svr', action='store_true')
+    parser.add_argument('--show_svr', action='store_true')
 
     args, other_args = parser.parse_known_args()
 
@@ -1790,7 +1818,11 @@ def _main():
     args.clean and cleanCache(cache)
     args.clear and clearCache(cache)
     args.reset and resetStatistics(cache)
-    args.debug and processDebug(cache)
+    args.debug and sys.exit(processDebug(cache, other_args))
+    args.exit_svr and control_server('close')
+    args.start_svr and start_server()
+    if args.show_svr:
+        print(control_server('count',read=True))
 
     if args.max_size and args.max_size > 0:
         with cache.lock, cache.configuration as cfg:
@@ -1891,6 +1923,8 @@ class CompilerItem(Statistics):
     @classmethod
     def set_compiler(cls, compiler):
         cls.compiler_hash = getCompilerHash(compiler)
+        cls.skip_get = 'CLCACHE_SKIPGET' in os.environ
+
     def __post_init__(self):
         if self.pch_hdr:
             self.pch_hdr = self.pch_hdr.strip().strip('"').upper()
@@ -2002,6 +2036,8 @@ class CompilerItem(Statistics):
         return
 
     def add_object(self, cache : Cache, key, file):
+        if self.skip_get:
+            self.compare_hash_file(key, file)
         printTraceStatement("Adding file {} to cache using key {}".format(file, key))
         with cache.lockFor(key):
             if cache.hasEntry(key):
@@ -2022,13 +2058,33 @@ class CompilerItem(Statistics):
     def get_object(self, cache : Cache, key, file):
         with cache.lockFor(key):
             if cache.hasEntry(key):
-                printTraceStatement("Get file keyed {} to {}".format(key, file))
                 if os.path.exists(file):
                     os.remove(file)
+                if self.skip_get:
+                    return self.get_hash_file(key ,file)
+                printTraceStatement("Get file keyed {} to {}".format(key, file))
                 return cache.getEntry2(key, file)
             else:
                 printTraceStatement("Failed to get file keyed {} to {}".format(key, file))
                 self.incFailureGetObj()
+
+    @staticmethod
+    def get_hash_file(key, file):
+        filename = ''.join((file, '.hash.txt'))
+        with open(filename, 'wb') as f:
+            printTraceStatement("Generate hash file {} to {}".format(key, filename))
+            f.write(key.encode('utf-8'))
+        return True
+
+    def compare_hash_file(self, key, file):
+        filename = ''.join((file, '.hash.txt'))
+        try:
+            with open(filename, 'rb') as f:
+                if key.lower() != f.read().decode('utf-8').lower():
+                    printTraceStatement("Compare file hash failed: {} {}".format(file, key))
+                    self.incHashCompareFailure()
+        except:
+            pass
 
     def __hash__(self):
         return self.item_spec.__hash__()
@@ -2047,7 +2103,7 @@ def processPreInvoke(cache, args, compiler):
     skip_pre = 'CLCACHE_FORCEMISS' in os.environ
     CompilerItem.set_compiler(compiler)
     content = parse_input(args)
-    miss = set(content) if skip_pre else set()
+    miss = set()
     for item in content:
         if item in miss: continue
         if not item.manifest_hit(cache):
@@ -2066,7 +2122,7 @@ def processPreInvoke(cache, args, compiler):
         if not success:
             miss.add(item)
     hits -= miss
-    print("*".join((x.item_spec for x in hits)), end='*')
+    print("*".join((x.item_spec for x in ( () if skip_pre else hits))), end='*')
     with cache.statistics.lock, cache.statistics as stats:
         if miss:
             stats.incProjectMiss()
@@ -2108,20 +2164,124 @@ def processPostInvoke(cache, args, compiler):
     return 0
 
 
-def processDebug(cache: Cache):
+def list_dir(dir):
+    def _filter_files(data, black_list, white_list):
+        import re
+        result = []
+        for title in data:
+            # Note that whitelist overrides black list
+            if any((re.search(x, title, re.IGNORECASE) for x in black_list)) \
+                    and not any((re.search(x, title, re.IGNORECASE) for x in white_list)):
+                continue
+            result.append(title)
+        return result
+
+    def _filter_files(data, black_list, white_list):
+        import re
+        result = []
+        for title in data:
+            # Note that whitelist overrides black list
+            if any((re.search(x, title, re.IGNORECASE) for x in black_list)) \
+                    and not any((re.search(x, title, re.IGNORECASE) for x in white_list)):
+                continue
+            result.append(title)
+        return result
+
+    files = []
+    links = []
+
+    def walktree(top):
+        for f in os.listdir(top):
+            pathname = os.path.join(top, f)
+            mode = os.lstat(pathname)[stat.ST_MODE]
+            if platform.system() == 'Windows' and islink(pathname):
+                # symbolic link
+                links.append(pathname)
+            elif stat.S_ISLNK(mode):
+                # symbolic link
+                links.append(pathname)
+                files.append(os.path.relpath(pathname, root))
+            elif stat.S_ISDIR(mode):
+                # It's a directory, recurse into it
+                walktree(pathname)
+
+            elif stat.S_ISREG(mode):
+                # It's a file, call the callback function
+                files.append(os.path.relpath(pathname, root))
+
+    walktree(dir)
+    files = _filter_files(files, package_black_list, package_white_list)
+
+def processDebug(cache: Cache, args):
     import glob
+    parser = ArgumentParser()
+    parser.add_argument('--file', dest='file_name', type=str)
+    parser.add_argument('--header', dest='header_name', type=str)
+    parser.add_argument('--cmd', dest='cmdline', type=str)
+    parser.add_argument('--obj', dest='obj_name', type=str)
+    parser.add_argument('--projects', action='store_true')
+    parser.add_argument('--negate', action='store_true')
+    parser.add_argument('--list', type=str)
+
+    args, other_args = parser.parse_known_args(args)
+
+    if args.list:
+        list_dir(args.list)
+
+    target_arg = None
+    if other_args and len(other_args) == 1:
+        target_arg = other_args[0]
+    file_name = target_arg if not args.file_name else args.file_name
+    header_name = target_arg if not args.header_name else args.header_name
+    cmdline = target_arg if not args.cmdline else args.cmdline
+    obj_name = target_arg if not args.obj_name else args.obj_name
+
+    if file_name or header_name or cmdline or obj_name: pass
+    else: return 0
+
     count = 0
+    entries = dict()
     objs = set()
-    for filename in glob.iglob(r'U:\bin\cache\manifests\**\*.json', recursive=True):
+    for filename in glob.iglob(r'{}\manifests\**\*.json'.format(cache.strategy.dir), recursive=True):
+        hash = os.path.basename(filename).rstrip('.json')
         b = json.load(open(filename))
-        count += 1
-    for filename in glob.iglob(r'U:\bin\cache\objects\**\object', recursive=True):
-        hash = filename.split('\\')[-2]
-        objs.add(hash)
+        cls = globals()[b['type']]
+        for e in b['entries'] :
+            i = cls(**e)
+            entries['|'.join((hash, i.dependency_hash))] = i
+            count += 1
 
-    print(count)
-    print(len(objs))
+    found = dict()
+    headerfound = dict()
+    for k, v in entries.items():
+        parent = v.parent_hash
+        if parent and parent in headerfound:
+            headerfound[k] = v
+        elif file_name and re.search(file_name, v.file, re.IGNORECASE) :
+            found[k] = v
+        elif cmdline and  re.search(cmdline, v.cmdline):
+            found[k] = v
+        elif header_name and re.search(header_name, '\n'.join(v.dependency), re.IGNORECASE):
+            headerfound[k] = v
+        elif obj_name and re.search(obj_name, '\n'.join([val for sublist in v.output for val in sublist]), re.IGNORECASE):
+            found[k] = v
 
+    found.update(headerfound)
+
+    # for filename in glob.iglob(r'U:\bin\cache\objects\**\object', recursive=True):
+    #     hash = filename.split('\\')[-2]
+    #     objs.add(hash)
+    if args.negate:
+        found = {x:y for x,y in entries.items() if x not in found}
+
+    if args.projects:
+        projs = set([i.project.split('(')[0] for i in found.values() if i.project])
+        print ('\n'.join(projs))
+        print('Total:{}'.format(len(projs)))
+    else:
+        print('\n'.join( [i.file for i in found.values() ] ))
+        print('Total:{}'.format(len(found)))
+    return 0
 
 def processCompileRequest(cache, compiler, args):
     printTraceStatement("Parsing given commandline '{0!s}'".format(args))

@@ -12,6 +12,7 @@ using static AcadExtension.CacheStrategy;
 using Microsoft.Build.Framework;
 using Microsoft.Build.CPPTasks;
 using Microsoft.Build.Utilities;
+using Microsoft.Win32.SafeHandles;
 
 namespace AcadExtension
 {
@@ -428,7 +429,6 @@ namespace AcadExtension
                     if (exitcode == 0)
                     {
                         var lines = ret.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
-                        System.Diagnostics.Debug.Assert(lines.Length > 0, "Clcache does not return anything");
                         ret = lines[lines.Length - 1];
                         var hits = ret.Split(new[] {"*"}, StringSplitOptions.RemoveEmptyEntries);
                         foreach (var item in hits)
@@ -679,6 +679,11 @@ namespace AcadExtension
             project.AfterLib = DateTime.Now;
         }
 
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        static extern SafeFileHandle CreateFile(string lpFileName, uint dwDesiredAccess, uint dwShareMode, IntPtr lpSecurityAttributes, uint dwCreationDisposition,  uint dwFlagsAndAttributes, IntPtr hTemplateFile);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool WriteFile(SafeFileHandle handle, byte[] bytes, int numBytesToWrite, out int numBytesWritten, IntPtr mustBeZero);
+
         // ILoggingService.LogBuildEvent ((Microsoft.Build.BackEnd.RequestBuilder)((Microsoft.Build.BackEnd.BuildRequestEntry)entry).Builder)._projectLoggingContext.LoggingService
         private static void LogTiming(this object engine, ProjectInfo project)
         {
@@ -698,26 +703,18 @@ namespace AcadExtension
 
             if (file != null)
             {
-                int retry = 0;
-                while (true)
+                var handle = CreateFile(file, 0x00100000 | 4, 2 | 1, IntPtr.Zero, 4, 128, IntPtr.Zero);
+                if (!handle.IsInvalid)
                 {
                     try
                     {
-                        System.IO.File.AppendAllText(file, r, s_defaultEncoding);
-                        break;
+                        var data = Encoding.UTF8.GetBytes(r);
+                        WriteFile(handle, data, data.Length, out var written, IntPtr.Zero);
                     }
-                    catch (Exception)
+                    finally
                     {
-                        retry++;
-                        if (retry < 5)
-                        {
-                            System.Threading.Thread.Sleep(100);
-                            continue;
-                        }
-                        else
-                        {
-                            throw;
-                        }
+                        handle.Close();
+
                     }
                 }
             }
