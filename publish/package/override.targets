@@ -3,8 +3,15 @@
     <PropertyGroup>
       <AclcacheFilePath Condition="$(AclcacheFilePath) == ''">bin\aclcache.dll</AclcacheFilePath>
     </PropertyGroup>
+    <PropertyGroup Condition="$(TargetFramework.StartsWith('netcore'))">
+      <_USECCACHE></_USECCACHE>
+      <_STATLOG></_STATLOG>
+      <_USEBREPRO></_USEBREPRO>
+    </PropertyGroup>
     <PropertyGroup Condition="$(_USECCACHE) != ''">
-      <_USEBREPRO>1</_USEBREPRO>
+      <_USEBREPRO Condition="$(_USEBREPRO) == ''">1</_USEBREPRO>
+      <_USENOPDB Condition="$(_USEZ7) == '' and $(_USENOPDB) == ''">1</_USENOPDB>
+      <_USENOPDB Condition="$(_USEZ7) != ''"></_USENOPDB>
     </PropertyGroup>
     <UsingTask Condition="$(_USECCACHE) != '' or $(_STATLOG) != ''" TaskName="AcadExtension.TimerTask" AssemblyFile="$(AclcacheFilePath)"/>
     <UsingTask Condition="$(_USEBREPRO) != ''" TaskName="RegexFileUpdate" AssemblyFile="$(AclcacheFilePath)"/>

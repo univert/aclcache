@@ -19,30 +19,24 @@ namespace AcadExtension
     public class CsvFileWriter : StreamWriter
     {
 
-        public CsvFileWriter(string filename)
-            : base(filename, false, Encoding.Unicode, 1024 * 64)
+        public CsvFileWriter(string filename, params string[] row)
+            : base(filename, false, Encoding.Unicode, 1024 * 1024)
         {
+            if (row.Length > 0)
+            {
+                WriteRow(row.Append(Utils._version).Append(Utils._currentOemEncoding.CodePage.ToString()));
+            }
         }
         public void WriteRow(IEnumerable<string> row)
         {
-            StringBuilder builder = new StringBuilder();
-            bool firstColumn = true;
-            foreach (string value in row)
-            {
-                if (!firstColumn)
-                    builder.Append('|');
-                if (value == null)
-                    builder.Append(string.Empty);
-                else
-                    builder.Append(value);
-                firstColumn = false;
-            }
-            WriteLine(builder.ToString());
+            WriteLine(string.Join("|", row)) ;
+            WriteLine("^^");
         }
         public void WriteRow(params string[] row)
         {
             WriteRow((IEnumerable<string>)row);
         }
+
     }
     internal static class Utils
     {
@@ -66,17 +60,19 @@ namespace AcadExtension
         }
 
         [System.Runtime.InteropServices.DllImport("kernel32.dll", EntryPoint = "GetOEMCP")] public static extern int GetOEMCP();
-        static Utils()
-        {
-        }
 
-        public static string _pythonLocation = Utils.GetPythonLocation("pythonw.exe");
-        public static Lazy<string> _pythonLocation2 = new Lazy<string>( () => Utils.GetPythonLocation());
-        public static string _clcacheLocation = Utils.GetClCacheLocation();
-        public static Encoding _currentOemEncoding = Encoding.GetEncoding(GetOEMCP());
+        public static string _pythonLocation_l;
+        public static string _pythonLocation => _pythonLocation_l ?? (_pythonLocation_l = Utils.GetPythonLocation("pythonw.exe"));
+        public static Lazy<string> _pythonLocation2 = new Lazy<string>(() => Utils.GetPythonLocation());
+        public static string _version_l;
+        public static string _version  => _version_l ?? (_version_l = string.Join(".", Environment.OSVersion.Version.Build, Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion")?.GetValue("UBR") ?? "0"));
+        public static string _clcacheLocation_l;
+        public static string _clcacheLocation => _clcacheLocation_l ?? (_clcacheLocation_l = Utils.GetClCacheLocation());
+        public static Encoding _currentOemEncoding_l;
+        public static Encoding _currentOemEncoding => _currentOemEncoding_l ?? (_currentOemEncoding_l = Encoding.GetEncoding(GetOEMCP()));
         public static string GetClCacheLocation()
         {
-            if (Environment.GetEnvironmentVariable("CLCACHE_LOCATION") is string loc && 
+            if (Environment.GetEnvironmentVariable("CLCACHE_LOCATION") is string loc &&
                 System.IO.Directory.Exists(loc))
             {
                 loc.TrimEnd('\\');
@@ -86,7 +82,7 @@ namespace AcadExtension
             return AssemblyDirectory;
         }
 
-        public static string GetPythonLocation(string name="python.exe")
+        public static string GetPythonLocation(string name = "python.exe")
         {
             string a;
             if (Environment.GetEnvironmentVariable("CLCACHE_PYTHON") is string loc &&
@@ -131,7 +127,7 @@ namespace AcadExtension
 
             return file;
         }
-        public static System.Diagnostics.ProcessStartInfo GetProcessStartInfo (string pathToTool, string commandLineCommands, bool redirect = false)
+        public static System.Diagnostics.ProcessStartInfo GetProcessStartInfo(string pathToTool, string commandLineCommands, bool redirect = false)
         {
             // Build up the command line that will be spawned.
             string commandLine = commandLineCommands;
@@ -177,19 +173,23 @@ namespace AcadExtension
         UseLinkerCache = 2,
         UseNoPdb = 4,
         UseNoPch = 8,
-        UseZ7 = 16
+        UseZ7 = 16,
+        AsyncCcache = 32,
+        AsyncLinker = 64,
     }
     [Flags] public enum BuildState : Int32
     {
         CompilerNotInvoked = 0,
         ClCachePreInvoked = 1,
-        CompileFinished =2 ,
-        ClCachePostInvoked =4,
+        CompileFinished = 2,
+        ClCachePostInvoked = 4,
+        LinkerCachePreInvoked = 8,
+        LinkerCachePostInvoked = 16,
     }
     public static class BuildWorkFlow
     {
-        static char[] StringArraySplitter = new char[]{ ';' };
-        public static int PopulateTaskFromSourceItem(this object task ,Type taskType, ITaskItem source, TrackedVCToolTaskInterfaceHelper schedulingTask)
+        static char[] StringArraySplitter = new char[] { ';' };
+        public static int PopulateTaskFromSourceItem(this object task, Type taskType, ITaskItem source, TrackedVCToolTaskInterfaceHelper schedulingTask)
         {
             int num = 0;
             foreach (PropertyInfo propertyInfo in taskType.GetProperties())
@@ -266,13 +266,10 @@ namespace AcadExtension
             return num;
         }
 
-
-        private static readonly System.Text.Encoding s_defaultEncoding = new System.Text.UTF8Encoding(false, true);
-
         public class CompileArtifact
         {
-            private static char[] s_QuoteChar = new char[] {'"'};
-            public CompileArtifact(string filename, string fullpath , string cmd, bool pch, string pchfile = null) {
+            public CompileArtifact(string filename, string fullpath, string cmd, bool pch, string pchfile = null)
+            {
                 ItemSpec = filename;
                 FullPath = fullpath;
                 Cmd = cmd;
@@ -288,6 +285,21 @@ namespace AcadExtension
 
             public bool UsePch => (!GenPch) && (PchHeader != null);
         }
+
+        public class LinkArtifact
+        {
+            public bool IsLink { get; set; } = false;
+            public bool IsDll { get; set; } = false;
+
+            public string _libGen { get; set; } = null;
+            public IEnumerable<string> Input { get; set; } = new string[0];
+            public IEnumerable<string> AdditionalInput { get; set; } = new string[0];
+            public IEnumerable<string> Dependency { get; set; } = new string[0];
+            public List<string> Output { get; set; } = new List<string>();
+            public string Cmdline { get; set; }
+            public string MainOut { get; set; }
+        }
+
         public class ProjectInfo
         {
             public string FullPath;
@@ -295,11 +307,13 @@ namespace AcadExtension
             public int ReqId;
             public ProjectItemInstance[] ClCompile;
             public List<CompileArtifact> CompileArtifacts;
+
+            public LinkArtifact LinkArtifact = new LinkArtifact();
             public string PathToCL;
+            public string PathToLinker { get; private set; }
+
             public Dictionary<string, CompileArtifact> CompileArtifactMap;
             public HashSet<string> ArtifactsHits = new HashSet<string>();
-            public ProjectItemInstance[] Link;
-            public ProjectItemInstance[] Lib;
             public TimeSpan CompileTime, LinkTime, LibTime;
             public DateTime? Start;
             public DateTime? BeforeReferences;
@@ -311,6 +325,8 @@ namespace AcadExtension
             public DateTime? AfterLib;
             public BuildState State { get; set; } = BuildState.CompilerNotInvoked;
             public bool CompileSuccess { get; set; } = true;
+            public bool LinkSuccess { get; set; } = true;
+
             public bool CompileArtifactCollected { get; set; } = false;
             private IBuildEngine CurrentEngine;
             public CacheStrategy Strategy { get; set; } = CacheStrategy.None;
@@ -351,11 +367,14 @@ namespace AcadExtension
                     {
                         artifact.PchHeader = cl.PrecompiledHeaderFile;
                     }
-                    CompileArtifacts.Add(artifact);
-                    CompileArtifactMap.Add(artifact.ItemSpec, artifact);
+                    if (!CompileArtifactMap.ContainsKey(artifact.ItemSpec))
+                    {
+                        CompileArtifacts.Add(artifact);
+                        CompileArtifactMap.Add(artifact.ItemSpec, artifact);
+                    }
                 }
             }
-            public int InvokeClCache(string switches, out string result , bool wait = true)
+            public int InvokeClCache(string switches, out string result, bool wait = true)
             {
                 var proc = new System.Diagnostics.Process();
                 var cmdline = $" {_clcacheLocation}\\clcache.py {switches}";
@@ -370,7 +389,8 @@ namespace AcadExtension
                     string s = string.Empty;
                     proc.StartInfo.RedirectStandardOutput = true;
                     proc.StartInfo.RedirectStandardError = true;
-                    proc.OutputDataReceived += (object sender, System.Diagnostics.DataReceivedEventArgs e) => {
+                    proc.OutputDataReceived += (object sender, System.Diagnostics.DataReceivedEventArgs e) =>
+                    {
                         if (e.Data != null)
                         {
                             s = e.Data;
@@ -415,12 +435,11 @@ namespace AcadExtension
                 if (CompileArtifacts == null) return;
                 State |= BuildState.ClCachePreInvoked;
                 var tmpfile = Utils.GetTemporaryFile(".1.txt");
-                using (var writer = new CsvFileWriter(tmpfile))
+                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToCL))
                 {
                     foreach (var item in CompileArtifacts)
                     {
-                        writer.WriteRow(item.ItemSpec ,item.FullPath, item.GenPch ? "2" : item.UsePch ? "1" : "0", item.PchHeader, item.Cmd);
-                        writer.WriteLine("^^");
+                        writer.WriteRow(item.ItemSpec, item.FullPath, item.GenPch ? "2" : item.UsePch ? "1" : "0", item.PchHeader, item.Cmd);
                     }
                 }
                 if (System.IO.File.Exists(tmpfile))
@@ -430,7 +449,7 @@ namespace AcadExtension
                     {
                         var lines = ret.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
                         ret = lines[lines.Length - 1];
-                        var hits = ret.Split(new[] {"*"}, StringSplitOptions.RemoveEmptyEntries);
+                        var hits = ret.Split(new[] { "*" }, StringSplitOptions.RemoveEmptyEntries);
                         foreach (var item in hits)
                         {
                             ArtifactsHits.Add(item);
@@ -441,15 +460,15 @@ namespace AcadExtension
 
             public virtual void PostInvokeClcache()
             {
-                if ( !State.HasFlag(BuildState.ClCachePreInvoked) || !State.HasFlag(BuildState.CompileFinished) 
-                    || State.HasFlag(BuildState.ClCachePostInvoked) || !CompileSuccess ) 
+                if (!State.HasFlag(BuildState.ClCachePreInvoked) || !State.HasFlag(BuildState.CompileFinished)
+                    || State.HasFlag(BuildState.ClCachePostInvoked) || !CompileSuccess)
                     return;
 
                 State |= BuildState.ClCachePostInvoked;
 
                 var tmpfile = Utils.GetTemporaryFile(".2.txt");
                 bool something = false;
-                using (var writer = new CsvFileWriter(tmpfile))
+                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToCL))
                 {
                     foreach (var item in CompileArtifacts)
                     {
@@ -457,21 +476,111 @@ namespace AcadExtension
                         {
                             something = true;
                             writer.WriteRow(item.ItemSpec, item.FullPath, item.GenPch ? "2" : item.UsePch ? "1" : "0", item.PchHeader, item.Cmd, string.Join("*", item.Dependency), string.Join("*", item.Output));
-                            writer.WriteLine("^^");
                         }
                     }
                 }
                 if (something)
                 {
-                    InvokeClCache($"-q {tmpfile} -b {PathToCL} -f {Desc}", out var ret, false);
+                    InvokeClCache($"-q {tmpfile} -b {PathToCL} -f {Desc}", out var ret, Strategy.HasFlag(AsyncCcache));
                 }
                 else
                 {
                     System.IO.File.Delete(tmpfile);
                 }
             }
+
+            internal bool PreInvokeLinkerCache(IEnumerable<ITaskItem> Sources, string output, IEnumerable<string> AdditionalDependencies, TrackedVCToolTask tool)
+            {
+                System.Diagnostics.Debug.Assert(!State.HasFlag(BuildState.LinkerCachePreInvoked));
+
+                this.State |= BuildState.LinkerCachePreInvoked;
+
+                var additonal = (AdditionalDependencies ?? Enumerable.Empty<string>()).Where(x => Path.IsPathRooted(x)).ToHashSet().Where(x => File.Exists(x)).Select(x => x.ToUpper()).ToArray();
+                var sources = Sources.Select(x => x.GetMetadata("FullPath").ToUpper()).ToArray();
+                if (LinkArtifact.IsLink)
+                    output = output ?? (LinkArtifact.IsDll ? Path.ChangeExtension(sources.First(x => x.ToUpper().EndsWith(".OBJ")), ".DLL") : Path.ChangeExtension(sources.First(x => x.ToUpper().EndsWith(".OBJ")), ".EXE"));
+                else
+                    output = output ?? Path.ChangeExtension(sources.First(x => x.ToUpper().EndsWith(".OBJ")), ".LIB");
+
+                this.PathToLinker = tool.invoke<string>("ComputePathToTool").ToUpper();
+                Array.Sort(sources);
+                Array.Sort(additonal);
+                this.LinkArtifact.Input = sources;
+                this.LinkArtifact.AdditionalInput = additonal;
+                this.LinkArtifact.Cmdline = tool.GenerateCommandLineExceptSwitches(new string[] { "Sources" }, VCToolTask.CommandLineFormat.ForTracking);
+                this.LinkArtifact.MainOut = (new TaskItem(output)).GetMetadata("FullPath").ToUpper();
+                var tmpfile = Utils.GetTemporaryFile(".3.txt");
+                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToLinker))
+                {
+                    writer.WriteRow(string.Join("*", LinkArtifact.Input.Concat(LinkArtifact.AdditionalInput)), LinkArtifact.Cmdline, LinkArtifact.MainOut);
+                }
+                if (System.IO.File.Exists(tmpfile))
+                {
+                    var exitcode = InvokeClCache($"-m {tmpfile} -b {PathToLinker} -f {Desc}", out var ret);
+                    BuildWorkFlow.DebugHook(5);
+                    if (exitcode == 0)
+                    {
+                        var lines = ret.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+                        ret = lines[lines.Length - 1];
+                        var hits = ret.Split(new[] { "*" }, StringSplitOptions.RemoveEmptyEntries);
+                        return hits.Length > 0 && hits[0] == LinkArtifact.MainOut;
+                    }
+                }
+
+                return false;
+            }
+
+            internal void PostInvokeLinkerCache(CanonicalTrackedInputFiles SourceDependencies, CanonicalTrackedOutputFiles SourceOutputs, TrackedVCToolTask tool)
+            {
+                if (!State.HasFlag(BuildState.LinkerCachePreInvoked)
+                     || State.HasFlag(BuildState.LinkerCachePostInvoked) || !LinkSuccess)
+                    return;
+                State |= BuildState.LinkerCachePostInvoked;
+
+                var depends = FilterInput(FilterLinkTlogs(SourceDependencies.DependencyTable), tool);
+                var outputs = FilterLinkTlogs(SourceOutputs.DependencyTable).ToHashSet();
+                System.Diagnostics.Debug.Assert(outputs.Contains(LinkArtifact.MainOut));
+                var inputs = new HashSet<string>(LinkArtifact.Input.Concat(LinkArtifact.AdditionalInput));
+                if (this.LinkArtifact.IsLink)
+                {
+                    if (LinkArtifact._libGen is string _libGen)
+                    {
+                        outputs.Add(_libGen);
+                        var liboutput = Path.ChangeExtension(_libGen, ".LIB");
+                        if (File.Exists(liboutput))
+                            outputs.Add(liboutput);
+                    }
+                    else if (tool.SkippedExecution)
+                    {
+                        var link = (Link)tool;
+                        var liboutput = link.ImportLibrary != null ? (new TaskItem(link.ImportLibrary)).GetMetadata("FullPath").ToUpper() :
+                            Path.ChangeExtension(LinkArtifact.MainOut, ".EXP");
+                        if (!inputs.Contains(liboutput) && File.Exists(liboutput))
+                        {
+                            outputs.Add(liboutput);
+                            liboutput = Path.ChangeExtension(liboutput, ".LIB");
+                            if (File.Exists(liboutput)) outputs.Add(liboutput);
+                        }
+                    }
+                }
+
+                depends.ExceptWith(outputs);  // remove inputs that are also outputs
+                depends.ExceptWith(inputs);
+
+                var tmpfile = Utils.GetTemporaryFile(".4.txt");
+                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToLinker))
+                {
+                    writer.WriteRow(string.Join("*", LinkArtifact.Input.Concat(LinkArtifact.AdditionalInput)), this.LinkArtifact.Cmdline, this.LinkArtifact.MainOut, string.Join("*", depends), string.Join("*", outputs));
+                }
+                if (System.IO.File.Exists(tmpfile))
+                {
+                    InvokeClCache($"-n {tmpfile} -b {PathToLinker} -f {Desc}", out var ret, Strategy.HasFlag(AsyncLinker));
+                }
+            }
             public bool IsOldStyleClcache => Strategy.HasFlag(UseCCache) && Strategy.HasFlag(UseNoPch) && (Strategy.HasFlag(UseNoPdb) || Strategy.HasFlag(UseZ7));
             public bool IsNewStyleClcache => Strategy.HasFlag(UseCCache) && !Strategy.HasFlag(UseNoPch);
+
+            public bool IsLinkerCache => Strategy.HasFlag(UseLinkerCache);
 
             internal void SetCurrentEngine(IBuildEngine engine)
             {
@@ -485,18 +594,42 @@ namespace AcadExtension
             {
                 CurrentEngine.LogErrorEvent(new BuildErrorEventArgs("ClCache", null, null, 1, 2, 3, 4, msg, null, null));
             }
+
+            internal HashSet<string> FilterInput(IEnumerable<string> inputs, TrackedVCToolTask task)
+            {
+                //var test = task.ExcludedInputPaths.Select(x => x.ItemSpec.ToUpper()).ToHashSet();
+                var test = new HashSet<string>();
+                var tool = PathToCL ?? PathToLinker ?? task.invoke<string>("ComputePathToTool").ToUpper();
+                var tooldir = Path.GetDirectoryName(tool).ToUpper();
+                return inputs.Where(x => Path.GetDirectoryName(x) is string dir && !dir.StartsWith(tooldir) && !test.Contains(dir)).ToHashSet();
+            }
+            
+            internal IEnumerable<string> FilterLinkTlogs<T>(Dictionary<string, Dictionary<string, T>> deptable)
+            {
+                var inputmarker = string.Join("|", LinkArtifact.Input);
+                foreach (var item in deptable)
+                {
+                    var marker = item.Key.Split('|');
+                    Array.Sort(marker);
+                    if (inputmarker == string.Join("|", marker))
+                        return item.Value.Keys;
+                }
+                System.Diagnostics.Trace.Assert(false, "Linker tlog parsing error");
+                return deptable.First().Value.Keys;
+            }
+
         }
         private static Dictionary<string, ProjectInfo> _projects = new Dictionary<string, ProjectInfo>();
 
         static BuildWorkFlow()
         {
-            Int32.TryParse(g_Aedebug, out g_aedebug);
+
             DebugHook(1);
         }
 
-        private static string g_Aedebug = Environment.GetEnvironmentVariable("_aedebug");
-        private static int g_aedebug = 0;
-        public static void DebugHook(int level = 1)
+        private static int? g_Aedebug_l;
+        private static int g_aedebug => (int)( g_Aedebug_l ?? (g_Aedebug_l = ((Environment.GetEnvironmentVariable("_aedebug") is string _tmp && Int32.TryParse(_tmp, out var t_Aedebug_l)) ? t_Aedebug_l : 0)));
+        [System.Diagnostics.Conditional("DEBUG")] public static void DebugHook(int level = 1)
         {
             if (g_aedebug == level)
             {
@@ -542,7 +675,7 @@ namespace AcadExtension
             return Expression.Lambda(dtype, call, param).Compile();
         }
 
-        public static void addEvent(this object obj, string prop ,Delegate dele)
+        public static void addEvent(this object obj, string prop, Delegate dele)
         {
             var evt = obj.GetType().GetEvent(prop, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             var types = evt.EventHandlerType.GetMethod("Invoke").GetParameters().Select(x => x.ParameterType).ToArray();
@@ -561,7 +694,7 @@ namespace AcadExtension
                 type = type.BaseType;
                 return invokeT<T>(type, obj, prop, types, pars);
             }
-            else 
+            else
             {
                 return (T)method.Invoke(obj, pars);
             }
@@ -594,36 +727,64 @@ namespace AcadExtension
         public static ProjectInfo Begin(this Microsoft.Build.Framework.IBuildEngine engine)
         {
             var fullpath = engine.getProp("_requestEntry").getProp("RequestConfiguration").getProp<string>("ProjectFullPath");
-           var reqId = engine.getProp("_requestEntry").getProp("Request").getProp<int>("GlobalRequestId");
-           var hash = ProjectInfo.Id(fullpath, reqId);
-           if (!_projects.TryGetValue(hash, out var project))
-           {
-               project = new ProjectInfo()
-               {
-                   FullPath = fullpath,
-                   ReqId = reqId,
-                   Start = DateTime.Now,
-                   Targets = engine.getProp("_requestEntry").getProp("Request").getProp<IEnumerable<string>>("Targets").ToArray(),
-               };
-               if (project.Targets.Length == 0)
-               {
-                   project.Targets = engine.getProp("_requestEntry").getProp("RequestConfiguration").getProp<IEnumerable<string>>("ProjectDefaultTargets").ToArray();
-               }
-               engine.getProp("_requestEntry").addEvent("OnStateChanged", (Action<object,object>)( (entry, b) => {
-                   if (3 == (int)Convert.ChangeType(b, typeof(int)))
-                   {
-                       if (_projects.TryGetValue(hash, out var _))
-                       {
-                           project.PostInvokeClcache();
-                           LogTiming(entry, project);
-                           _projects.Remove(hash);
-                       }
-                   }
-               }));
-               _projects.Add(hash, project);
-           }
-           project.SetCurrentEngine(engine);
-           return project;
+            var reqId = engine.getProp("_requestEntry").getProp("Request").getProp<int>("GlobalRequestId");
+            var hash = ProjectInfo.Id(fullpath, reqId);
+            if (!_projects.TryGetValue(hash, out var project))
+            {
+                project = new ProjectInfo()
+                {
+                    FullPath = fullpath,
+                    ReqId = reqId,
+                    Start = DateTime.Now,
+                    Targets = engine.getProp("_requestEntry").getProp("Request").getProp<IEnumerable<string>>("Targets").ToArray(),
+                };
+                if (project.Targets.Length == 0)
+                {
+                    project.Targets = engine.getProp("_requestEntry").getProp("RequestConfiguration").getProp<IEnumerable<string>>("ProjectDefaultTargets").ToArray();
+                }
+                engine.getProp("_requestEntry").addEvent("OnStateChanged", (Action<object, object>)((entry, b) =>
+                {
+                    if (3 == (int)Convert.ChangeType(b, typeof(int)))
+                    {
+                        if (_projects.TryGetValue(hash, out var _))
+                        {
+                            project.PostInvokeClcache();
+                            LogTiming(entry, project);
+                            _projects.Remove(hash);
+                        }
+                    }
+                }));
+                engine.PopulateProjectStrategy(project);
+                _projects.Add(hash, project);
+            }
+            project.SetCurrentEngine(engine);
+            return project;
+        }
+
+        public static void PopulateProjectStrategy(this Microsoft.Build.Framework.IBuildEngine engine, ProjectInfo project)
+        {
+            var _useccache = ProjectProperty(engine, "_USECCACHE");
+            if (!string.IsNullOrEmpty(_useccache) && Int32.TryParse(_useccache, out var useccache))
+            {
+                if ((useccache & 1) == 1)
+                    project.Strategy |= CacheStrategy.UseCCache;
+                if ((useccache & 2) == 2)
+                    project.Strategy |= CacheStrategy.UseLinkerCache;
+                if (!string.IsNullOrEmpty(ProjectProperty(engine, "_USENOPCH")))
+                    project.Strategy |= CacheStrategy.UseNoPch;
+                if (!string.IsNullOrEmpty(ProjectProperty(engine, "_USENOPDB")))
+                    project.Strategy |= CacheStrategy.UseNoPdb;
+                if (!string.IsNullOrEmpty(ProjectProperty(engine, "_USEZ7")))
+                    project.Strategy |= CacheStrategy.UseZ7;
+                if (ProjectProperty(engine, "CLCACHE_SYNC") is string _async && Int32.TryParse(_async, out var async_v))
+                {
+                    if ((async_v & 1) == 1)
+                        project.Strategy |= CacheStrategy.AsyncCcache;
+                    if ((async_v & 2) == 2)
+                        project.Strategy |= CacheStrategy.AsyncLinker;
+                }
+
+            }
         }
         public static ProjectInfo BeginCompile(this Microsoft.Build.Framework.IBuildEngine engine)
         {
@@ -632,18 +793,10 @@ namespace AcadExtension
             if (project.BeforeCompile == null)
             {
                 project.BeforeCompile = DateTime.Now;
-                if (!string.IsNullOrEmpty(ProjectProperty(engine, "_USECCACHE")))
+                if (project.IsNewStyleClcache)
                 {
-                    project.Strategy |= CacheStrategy.UseCCache;
-                    if (!string.IsNullOrEmpty(ProjectProperty(engine, "_USENOPCH")))
-                        project.Strategy |= CacheStrategy.UseNoPch;
-                    if (!string.IsNullOrEmpty(ProjectProperty(engine, "_USENOPDB")))
-                        project.Strategy |= CacheStrategy.UseNoPdb;
-                    if (!string.IsNullOrEmpty(ProjectProperty(engine, "_USEZ7")))
-                        project.Strategy |= CacheStrategy.UseZ7;
                     project.ClCompile = engine.getProp("_requestEntry").getProp("RequestConfiguration").getProp("BaseLookup").invoke<IEnumerable<ProjectItemInstance>>("GetItems", "ClCompile").ToArray();
                 }
-
             }
             return project;
         }
@@ -653,7 +806,7 @@ namespace AcadExtension
             if (project.BeforeLink == null)
             {
                 project.BeforeLink = DateTime.Now;
-                project.Link = engine.getProp("_requestEntry").getProp("RequestConfiguration").getProp("BaseLookup").invoke<IEnumerable<ProjectItemInstance>>("GetItems", "Link").ToArray();
+                project.LinkArtifact.IsLink = true;
             }
             return project;
         }
@@ -680,7 +833,7 @@ namespace AcadExtension
         }
 
         [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
-        static extern SafeFileHandle CreateFile(string lpFileName, uint dwDesiredAccess, uint dwShareMode, IntPtr lpSecurityAttributes, uint dwCreationDisposition,  uint dwFlagsAndAttributes, IntPtr hTemplateFile);
+        static extern SafeFileHandle CreateFile(string lpFileName, uint dwDesiredAccess, uint dwShareMode, IntPtr lpSecurityAttributes, uint dwCreationDisposition, uint dwFlagsAndAttributes, IntPtr hTemplateFile);
         [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
         static extern bool WriteFile(SafeFileHandle handle, byte[] bytes, int numBytesToWrite, out int numBytesWritten, IntPtr mustBeZero);
 
@@ -689,11 +842,11 @@ namespace AcadExtension
         {
 
             DateTime? starttime = project.Start ?? project.BeforeCompile ?? project.BeforeLib ?? project.BeforeLink;
-            var compile = project.CompileTime.Ticks / 10000000.0 ;
-            var link = project.LinkTime.Ticks / 10000000.0 ;
-            var lib = project.LibTime.Ticks / 10000000.0 ;
-            var other = starttime.HasValue ? (DateTime.Now.Ticks - starttime.Value.Ticks ) / 10000000.0 - compile - link - lib : 0.0;
-            string r = (project.State.HasFlag(BuildState.ClCachePreInvoked))?
+            var compile = project.CompileTime.Ticks / 10000000.0;
+            var link = project.LinkTime.Ticks / 10000000.0;
+            var lib = project.LibTime.Ticks / 10000000.0;
+            var other = starttime.HasValue ? (DateTime.Now.Ticks - starttime.Value.Ticks) / 10000000.0 - compile - link - lib : 0.0;
+            string r = (project.State.HasFlag(BuildState.ClCachePreInvoked)) ?
             $"{project.Desc},{compile},{link},{lib},{other},{project.ArtifactsHits.Count},{project.CompileArtifacts.Count - project.ArtifactsHits.Count}\n"
                 :
             $"{project.Desc},{compile},{link},{lib},{other},0,0 \n";
@@ -727,8 +880,9 @@ namespace AcadExtension
         public override bool Execute()
         {
             _project = this.BuildEngine.BeginCompile();
-            using var t = new Timer(t => {
-                _project.CompileTime += t ;
+            using var t = new Timer(t =>
+            {
+                _project.CompileTime += t;
             });
             if (_project.IsOldStyleClcache)
             {
@@ -778,15 +932,13 @@ namespace AcadExtension
             {
                 var artifact = _project.CompileArtifactMap[item.ItemSpec];
                 var fullpath = item.GetMetadata("FullPath").ToUpper();
-#if DEBUG
                 System.Diagnostics.Debug.Assert(fullpath == artifact.FullPath);
-#endif
                 var objfile = Path.GetFullPath(item.GetMetadata("ObjectFile")).ToUpper();
                 System.Diagnostics.Debug.Assert(!string.IsNullOrEmpty(objfile), $"ObjectFile of {item.ItemSpec} has no value");
-                var headers = dep.DependencyTable[fullpath].Keys.Where(x => !test.Contains(Path.GetDirectoryName(x)) && x != fullpath).ToHashSet();
+                var headers = _project.FilterInput(dep.DependencyTable[fullpath].Keys.Where(x => x != fullpath), this);
                 var outputs_all = SourceOutputs.OutputsForSource(item).Select(x => x.ItemSpec).ToHashSet();
                 var output = SourceOutputs.OutputsForSource(item).FirstOrDefault(x => x.ItemSpec.StartsWith(objfile));
-                System.Diagnostics.Debug.Assert(output !=null,  $"{item.ItemSpec} has no output");
+                System.Diagnostics.Debug.Assert(output != null, $"{item.ItemSpec} has no output");
                 artifact.Output.Add(output.ItemSpec);
                 headers.ExceptWith(outputs_all);  // remove inputs that are also outputs
                 artifact.Dependency = headers;
@@ -801,7 +953,7 @@ namespace AcadExtension
         {
             base.RemoveTaskSpecificOutputs(compactOutputs);
         }
-        protected override int ExecuteTool ( string pathToTool, string responseFileCommands, string commandLineCommands)
+        protected override int ExecuteTool(string pathToTool, string responseFileCommands, string commandLineCommands)
         {
             //if (_project.IsOldStyleClcache)
             //{
@@ -823,7 +975,7 @@ namespace AcadExtension
 #endif
             return base.ExecuteTool(pathToTool, responseFileCommands, commandLineCommands);
         }
-        protected override System.Diagnostics.ProcessStartInfo GetProcessStartInfo(string pathToTool,string commandLineCommands, string responseFileSwitch )
+        protected override System.Diagnostics.ProcessStartInfo GetProcessStartInfo(string pathToTool, string commandLineCommands, string responseFileSwitch)
         {
             var pinfo = base.GetProcessStartInfo(pathToTool, commandLineCommands, responseFileSwitch);
             if (_project.IsOldStyleClcache)
@@ -837,32 +989,76 @@ namespace AcadExtension
     }
     public class Link : Microsoft.Build.CPPTasks.Link
     {
-        public override bool Execute()  
+        protected BuildWorkFlow.ProjectInfo _project { get; set; }
+
+        public override bool Execute()
         {
             BuildWorkFlow.DebugHook(3);
-            var proj = this.BuildEngine.BeginLink();
-            using var t = new Timer(t => {
-                proj.LinkTime += t;
+            _project = this.BuildEngine.BeginLink();
+            using var t = new Timer(t =>
+            {
+                _project.LinkTime += t;
             });
-            proj.PostInvokeClcache();
-            var r = base.Execute();
-            this.BuildEngine.AfterLink(proj);
+            _project.PostInvokeClcache();
+            bool skip = false;
+            if (_project.IsLinkerCache)
+            {
+                _project.LinkArtifact.IsDll = this.LinkDLL;
+                skip = _project.PreInvokeLinkerCache(Sources, OutputFile, AdditionalDependencies, this);
+            }
+            bool r = true;
+            if (!skip)
+                r = base.Execute();
+            _project.LinkSuccess &= r;
+            if (!skip && r)
+                PostProcess();
+            this.BuildEngine.AfterLink(_project);
             return r;
+        }
+
+        protected override void RemoveTaskSpecificOutputs(CanonicalTrackedOutputFiles output)
+        {
+            if (_project.IsLinkerCache)
+                _project.LinkArtifact._libGen = _project.FilterLinkTlogs(output.DependencyTable).FirstOrDefault(x => x.EndsWith(".EXP"));
+            base.RemoveTaskSpecificOutputs(output);
+        }
+        private void PostProcess()
+        {
+            if (!_project.IsLinkerCache) return;
+            _project.PostInvokeLinkerCache(SourceDependencies, SourceOutputs, this);
         }
     }
     public class LIB : Microsoft.Build.CPPTasks.LIB
     {
+        protected BuildWorkFlow.ProjectInfo _project { get; set; }
         public override bool Execute()
         {
             BuildWorkFlow.DebugHook(4);
-            var proj = this.BuildEngine.BeginLib();
-            using var t = new Timer(t => {
-                proj.LibTime += t;
+            _project = this.BuildEngine.BeginLib();
+            using var t = new Timer(t =>
+            {
+                _project.LibTime += t;
             });
-            proj.PostInvokeClcache();
-            var r = base.Execute();
-            this.BuildEngine.AfterLib(proj);
+            _project.PostInvokeClcache();
+            bool skip = false;
+            if (_project.IsLinkerCache)
+            {
+                skip = _project.PreInvokeLinkerCache(Sources, OutputFile, AdditionalDependencies, this);
+            }
+            bool r = true;
+            if (!skip)
+              r = base.Execute();
+            _project.LinkSuccess &= r;
+            if (!skip && r)
+                PostProcess();
+            this.BuildEngine.AfterLib(_project);
             return r;
+        }
+
+        private void PostProcess()
+        {
+            if (!_project.IsLinkerCache) return;
+            _project.PostInvokeLinkerCache(SourceDependencies, SourceOutputs, this);
         }
     }
 }

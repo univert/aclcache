@@ -1,1 +1,1 @@
-fc u:\acadbuildres\output\outputfiles1.hash.txt u:\acadbuildres\output\outputfiles1.hash.txt > "%CI_RES%\compare.result.txt"
+fc %PACK_PATH%\outputfiles1.hash.txt %PACK_PATH%\outputfiles2.hash.txt > "%CI_RES%\compare.result.txt"
