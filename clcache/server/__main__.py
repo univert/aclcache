@@ -69,7 +69,45 @@ class HashCache:
         return excluded
 
 
+class file_buffer:
+
+    def __init__(self):
+        self._buffer = dict()
+
+    def get(self, filename):
+        h = self._buffer.get(filename)
+        if h:
+            uniq = self.uniq(filename)
+            if uniq:
+                h = self._buffer.get(uniq)
+                if not h:
+                    h = self.get_file_hash(filename)
+                    self._buffer[filename] = self._buffer[uniq] = h
+                return '|'.join((h, '1'))
+            else:
+                return '|'.join((h, '0'))
+
+    def add(self, filename, hash):
+        self._buffer[filename] = hash
+        u = self.uniq(filename)
+        if u:
+            self._buffer[u] = hash
+    def uniq(self, filename):
+        try:
+            stat = os.stat(filename)
+            return '|'.join([filename, str(stat.st_mtime_ns), str(stat.st_size), str(stat.st_ctime_ns)])
+        except:pass
+
+    def __len__(self):
+        return len(self._buffer)
+
+    def get_file_hash(self, path):
+        with open(path, 'rb') as f:
+            return hashlib.md5(f.read()).hexdigest()
+
+
 class Connection:
+    _buffer = file_buffer()
     def __init__(self, pipe, cache, onCloseCallback):
         self._readBuffer = b''
         self._pipe = pipe
@@ -91,13 +129,37 @@ class Connection:
         elif self._readBuffer.endswith(b'\x01'):
             data = self._readBuffer[:-1].decode('utf-8').splitlines()
             if data:
-                self.__class__.__dict__[data[0]](self, pipe)
-    def close(self, pipe):
+                self.__class__.__dict__[data[0]](self, pipe, data[1:])
+
+    def close(self, pipe, data):
         logging.info('exit command')
         sys.exit(0)
 
-    def count(self, pipe):
+    def get_buffer_hash(self, pipe, data):
+        result = []
+        for file in data:
+            r = self._buffer.get(file)
+            if r: result.append(r)
+            else:
+                try:
+                    result.append('|'.join((self._cache.getFileHash(file), '1')))
+                except:
+                    break
+
+        response = '\n'.join(result).encode('utf-8')
+        pipe.write(response + b'\x00', self._onWriteDone)
+
+    def add_buffer_hash(self, pipe, data):
+        for item in data:
+            file, hash = item.split('|')
+            self._buffer.add(file, hash)
+        self._onWriteDone(pipe, None)
+
+    def count(self, pipe, data):
         pipe.write( str(self._cache._count).encode('utf-8') + b'\x00', self._onWriteDone )
+
+    def count2(self, pipe, data):
+        pipe.write( str(len(self._buffer)).encode('utf-8') + b'\x00', self._onWriteDone )
 
     def _onWriteDone(self, pipe, error):
         logging.debug("sent response to client, closing connection")

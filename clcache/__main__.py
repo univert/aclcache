@@ -18,7 +18,6 @@ from argparse import ArgumentParser
 
 VERSION = "5.0-dev"
 
-
 def diff_time():
     creationtime = wintypes.ULARGE_INTEGER()
     exittime = wintypes.ULARGE_INTEGER()
@@ -218,7 +217,7 @@ class ManifestSection:
         if not os.path.exists(fileName):
             return None
         try:
-            with open(fileName, 'r') as inFile:
+            with open(fileName, 'rb') as inFile:
                 doc = json.load(inFile)
                 return Manifest([globals()[doc['type']](**e) for e in doc['entries']])
         except IOError:
@@ -249,7 +248,7 @@ class ManifestRepository:
     # invalidation, such that a manifest that was stored using the old format is not
     # interpreted using the new format. Instead the old file will not be touched
     # again due to a new manifest hash and is cleaned away after some time.
-    MANIFEST_FILE_FORMAT_VERSION = 9
+    MANIFEST_FILE_FORMAT_VERSION = 10
 
     def __init__(self, manifestsRootDir):
         self._manifestsRootDir = manifestsRootDir
@@ -709,7 +708,7 @@ class PersistentJSONDict(defaultdict):
         self._dirty = False
         self._fileName = fileName
         try:
-            with open(self._fileName, 'r') as f:
+            with open(self._fileName, 'rb') as f:
                 self.update(json.load(f))
         except IOError:
             pass
@@ -736,7 +735,7 @@ class PersistentJSONDict(defaultdict):
 
 
 class Configuration:
-    _defaultValues = {"MaximumCacheSize": 1073741824} # 1 GiB
+    _defaultValues = {"MaximumCacheSize": 214748364800} # 1 GiB
 
     def __init__(self, configurationFile):
         self._configurationFile = configurationFile
@@ -790,10 +789,18 @@ class StatisticsMixin:
         'ProjectHits',
         'ProjectMiss',
         'HashCompareFailure',
+        "PreInvokeLauchCountLib",
+        "PostInvokeLauchCountLib",
+        "PreInvokeLauchCountLink",
+        "PostInvokeLauchCountLink",
     }
     NEW_PERSIST_KEYS = {
         'ManifestCount',
         'ManifestEntryCount',
+        'ManifestCountLib',
+        'ManifestEntryCountLib',
+        'ManifestCountLink',
+        'ManifestEntryCountLink',
     }
     _stats = defaultdict(int)
 
@@ -809,10 +816,16 @@ class StatisticsMixin:
             return self._stats[k]
 
         def setter(self, v):
-            self._stats[k] = v
+            if isinstance(self, LinkerItem):
+                self._stats[k+self.toolname] = v
+            else:
+                self._stats[k] = v
 
         def inc(self, v=1):
-            self._stats[k] += v
+            if isinstance(self, LinkerItem):
+                self._stats[k+self.toolname] += v
+            else:
+                self._stats[k] += v
 
         #getter.__name__ = k
         setter.__name__ = 'set{}'.format(k)
@@ -821,6 +834,12 @@ class StatisticsMixin:
         setattr(cls, setter.__name__, setter)
         setattr(cls, inc.__name__, inc)
 
+    def __getattr__(self, name):
+        if isinstance(self, LinkerItem) and name.endswith(self.toolname):
+            return self._stats[name]
+        elif isinstance(self, Statistics):
+            return self._stats[name] if name in self._stats else 0
+        raise AttributeError
 
 StatisticsMixin.init_methods()
 
@@ -983,9 +1002,12 @@ class Statistics(StatisticsMixin):
         self._stats[Statistics.CALLS_FOR_PREPROCESSING] += 1
 
     def resetCounters(self):
-        for k in (Statistics.RESETTABLE_KEYS | self.NEW_KEYS) & set( self._stats.keys()):
-            self._stats[k] = 0
+        for k in self._stats.keys():
+            if k not in Statistics.NON_RESETTABLE_KEYS and k not in self.NEW_PERSIST_KEYS:
+                self._stats[k] = 0
 
+    def clear_stat(self):
+        self._stats.clear()
 
 class AnalysisError(Exception):
     pass
@@ -1020,13 +1042,13 @@ class InvalidArgumentError(AnalysisError):
 
 
 @functools.lru_cache(maxsize=1)
-def getCompilerHash(compilerBinary):
+def getCompilerHash(compilerBinary, *platform_version):
     stat = os.stat(compilerBinary)
-    data = '|'.join([
-        str(stat.st_mtime),
+    data = '|'.join((
+        str(stat.st_mtime_ns),
         str(stat.st_size),
         compilerBinary,
-        ])
+        ) + platform_version)
     hasher = HashAlgorithm()
     hasher.update(data.encode("UTF-8"))
     return hasher.hexdigest()
@@ -1180,8 +1202,11 @@ def findCompilerBinary():
     return None
 
 OutputDebugStringW = windll.kernel32.OutputDebugStringW
+OutputDebugStringW.argtypes = (wintypes.LPCWSTR,)
 WriteFile = windll.kernel32.WriteFile
 CreateFileW = windll.kernel32.CreateFileW
+DeleteFileW = windll.kernel32.DeleteFileW
+DeleteFileW.argtypes = (wintypes.LPCWSTR,)
 
 def shared_append(path: str, msg: str):
     msg = '{}\n'.format(msg).encode('utf-8')
@@ -1319,10 +1344,10 @@ def read_file(includeFile):
         rawBytes = f.read()
     encoding = None
     bomToEncoding = {
+        codecs.BOM_UTF16_LE: 'utf-16-le',
         codecs.BOM_UTF32_BE: 'utf-32-be',
         codecs.BOM_UTF32_LE: 'utf-32-le',
         codecs.BOM_UTF16_BE: 'utf-16-be',
-        codecs.BOM_UTF16_LE: 'utf-16-le',
     }
     for bom, enc in bomToEncoding.items():
         if rawBytes.startswith(bom):
@@ -1574,9 +1599,9 @@ def jobCount(cmdLine):
         # not expected to happen
         return 2
 
-def printStatistics(cache):
+def printStatistics(cache, json=False):
     if '_USECCACHE' in os.environ and '_USENOPCH' not in os.environ:
-        return printStatistics2(cache)
+        return printStatistics2(cache, json)
     template = """
 clcache statistics:
   current cache dir            : {}
@@ -1618,71 +1643,101 @@ clcache statistics:
             stats.numCallsWithPch(),
         ))
 
-def printStatistics2(cache):
-    template = """
+def printStatistics2(cache, ifjson= False):
+  with  cache.statistics as stats, cache.configuration as cfg:
+    PreInvokeExecutionTime = stats.PreInvokeExecutionTime / 10**7
+    PostInvokeExecutionTime = stats.PostInvokeExecutionTime / 10**7
+    PreInvokeCpuTime = stats.PreInvokeCpuTime / 10**7
+    PostInvokeCpuTime = stats.PostInvokeCpuTime / 10**7
+    postwaitrate = (1 - PostInvokeCpuTime /  PostInvokeExecutionTime) * 100 if PostInvokeExecutionTime else 0
+    prewaitrate = (1 - PreInvokeCpuTime /  PreInvokeExecutionTime) * 100 if PreInvokeExecutionTime else 0
+
+    list(map(lambda *x: sum(x), [1, 4, 2, 3, 4, 2], [9, 2], [33, 1]))
+    AllMiss = stats.EntryMiss + stats.HashMiss + stats.CppRecompiledFromPchChange + stats.FailureGetObj
+    allfiles = (stats.EntryHits + AllMiss)
+    fpercent = 100* stats.EntryHits / allfiles if allfiles  else 0
+    frecompile = 100* (AllMiss + stats.PchRecompiledFromCppChange) / allfiles if allfiles else 0
+    AddObjSize = stats.AddObjSize / (1024 * 1024)
+
+    def tripple(op = lambda *x: ''.join(map(str,x)) ):
+        def getter(*names):
+            r = [[stats.__getattr__(name), stats.__getattr__(name+'Lib'), stats.__getattr__(name+'Link')] for name in names]
+            return list(map(op, *r))
+        return getter
+
+    class fmat:
+        def __init__(self, op = lambda x: x, suffix='', fom =':<9'):
+            self.val = tripple(op)
+            self.suffix = suffix
+            self.fom = fom
+        def __getattr__(self, name):
+            a,b,c = self.val(name)
+            ss = "{{a{}}}{{self.suffix}} {{b{}}}{{self.suffix}} {{c{}}}{{self.suffix}}".format(self.fom, self.fom, self.fom)
+            return eval(f'f"""{ss}"""')
+
+        def __call__(self, *names):
+            a, b, c = self.val(*names)
+            ss = "{{a{}}}{{self.suffix}} {{b{}}}{{self.suffix}} {{c{}}}{{self.suffix}}".format(self.fom, self.fom, self.fom)
+            return eval(f'f"""{ss}"""')
+
+    mat = fmat()
+    matSize = fmat(lambda x: x / (1024 * 1024), '', ':<9.2f')
+    matTime = fmat(lambda x: x / 10**7, '', ':<9.2f')
+
+    jj = stats._stats
+    jj['cache_hit_rate'] = f'{fpercent:.2f} %'
+    jj['cache_miss'] = AllMiss
+    jj['cache_hit_direct'] = stats.EntryHits
+    jj['cache_directory'] = str(cache)
+    jj = json.dumps(jj, indent=2)
+    template = f"""
     clcache statistics:
-      current cache dir         : {}
-      maximum cache size        : {:.2f} GB
-      cache size                : {:.2f} GB
-      cache entries             : {}
-      #manifest count           : {stats.ManifestCount}
-      #manifest entry           : {stats.ManifestEntryCount}
-      
-      file hit rate             : {fpercent:.2f}%
-      file rebuild rate         : {frecompile:.2f}%
-      #file hits                : {stats.EntryHits} (manifest hash hits: {stats.HashHits})
-      #file misses              : {AllMiss}
-        source/cmd changed      : {stats.HashMiss}
-        header changed          : {stats.EntryMiss}
-        pch changed             : {stats.CppRecompiledFromPchChange}
-        obj missing             : {stats.FailureGetObj}
-      #pch file rebuild         : {stats.PchRecompiledFromCppChange}
-
-      #proj cache hits :        : {stats.ProjectHits}
-      #proj cache misses :      : {stats.ProjectMiss}
-
-      diagnostics
-        #entry modified         : {stats.DuplicateManifestEntryFound}
-        #identical entry found  : {stats.IdenticalEntryCount}
-        #add entry              : {stats.AddEntryCount}
-        #duplicate objs found   : {stats.DuplicateObjHashFound}
-        #add objs               : {stats.AddObjCount}
-        add objs size           : {AddObjSize:.2f} MB
-        #failure add obj        : {stats.FailureAddObj}
-        #header file missing    : {stats.DependencyMissingCount}
-        #cache cleanup          : {stats.CleanUpCount}
-        #hash compare failure   : {stats.HashCompareFailure}
-      run statistics
-        #preinvoke launch       : {stats.PreInvokeLauchCount}
-        #preinvoke exit         : {stats.PreInvokeExitCount}
-        preinvoke time          : {PreInvokeExecutionTime:.3f} Seconds
-        preinvoke CPU time      : {PreInvokeCpuTime:.3f} Seconds
-        preinvoke wait%         : {prewaitrate:.2f}%
-        #postinvoke launch      : {stats.PostInvokeLauchCount}
-        #postinvoke exit        : {stats.PostInvokeExitCount}
-        postinvoke time         : {PostInvokeExecutionTime:.3f} Seconds
-        postinvoke CPU time     : {PostInvokeCpuTime:.3f} Seconds
-        postinvoke wait%        : {postwaitrate:.2f}%        
+      current cache dir           : {str(cache)}
+      maximum cache size          : {cfg.maximumCacheSize() / (1024 * 1024 * 1024):.2f} GB
+      cache size                  : {stats.currentCacheSize() / (1024 * 1024 * 1024):.2f} GB
+      cache entries               : {stats.numCacheEntries()}
+      #manifest count             : {mat.ManifestCount}
+      #manifest entry             : {mat.ManifestEntryCount}
         
-        """.strip()
-    with  cache.statistics as stats, cache.configuration as cfg:
-        PreInvokeExecutionTime = stats.PreInvokeExecutionTime / 10**7
-        PostInvokeExecutionTime = stats.PostInvokeExecutionTime / 10**7
-        PreInvokeCpuTime = stats.PreInvokeCpuTime / 10**7
-        PostInvokeCpuTime = stats.PostInvokeCpuTime / 10**7
-        postwaitrate = (1 - PostInvokeCpuTime /  PostInvokeExecutionTime) * 100 if PostInvokeExecutionTime else 0
-        prewaitrate = (1 - PreInvokeCpuTime /  PreInvokeExecutionTime) * 100 if PreInvokeExecutionTime else 0
-        AllMiss = stats.EntryMiss + stats.HashMiss + stats.CppRecompiledFromPchChange + stats.FailureGetObj
-        allfiles = (stats.EntryHits + AllMiss)
-        fpercent = 100* stats.EntryHits / allfiles if allfiles  else 0
-        frecompile = 100* (AllMiss + stats.PchRecompiledFromCppChange) / allfiles if allfiles else 0
-        AddObjSize = stats.AddObjSize / (1024 * 1024)
-        print(template.format(
-            str(cache),
-            cfg.maximumCacheSize() / (1024 * 1024 * 1024),
-            stats.currentCacheSize() / (1024 * 1024 * 1024),
-            stats.numCacheEntries(),
-            **locals()))
+      file hit rate               : {fpercent:.2f}%
+      file rebuild rate           : {frecompile:.2f}%
+      #file hits                  : {mat.EntryHits}
+      #manifest hash hits         : {mat.HashHits}
+      #file misses                : {fmat(lambda *x: sum(x))('EntryMiss', 'HashMiss', 'CppRecompiledFromPchChange','FailureGetObj')}
+        input/cmd changed         : {mat.HashMiss}
+        dependency changed        : {mat.EntryMiss}
+        pch changed               : {stats.CppRecompiledFromPchChange}
+        output missing            : {mat.FailureGetObj}
+      #pch file rebuild           : {stats.PchRecompiledFromCppChange}
+  
+      #proj cache hits :          : {mat.ProjectHits}
+      #proj cache misses :        : {mat.ProjectMiss}
+  
+      diagnostics  
+        #entry modified           : {mat.DuplicateManifestEntryFound}
+        #identical entry found    : {mat.IdenticalEntryCount}
+        #add entry                : {mat.AddEntryCount}
+        #duplicate objs found     : {mat.DuplicateObjHashFound}
+        #add objs                 : {mat.AddObjCount}
+        add objs size(MB)         : {matSize.AddObjSize}
+        #failure add obj          : {mat.FailureAddObj}
+        #header file missing      : {mat.DependencyMissingCount}
+        #cache cleanup            : {stats.CleanUpCount}
+        #hash compare failure     : {mat.HashCompareFailure}
+      run statistics  
+        #preinvoke launch         : {mat.PreInvokeLauchCount}
+        #preinvoke exit           : {mat.PreInvokeExitCount}
+        preinvoke time(Sec)       : {matTime.PreInvokeExecutionTime} 
+        preinvoke CPU time(Sec)   : {matTime.PreInvokeCpuTime:}
+        preinvoke wait%           : {prewaitrate:.2f}%
+        #postinvoke launch        : {mat.PostInvokeLauchCount}
+        #postinvoke exit          : {mat.PostInvokeExitCount}
+        postinvoke time(sec)      : {matTime.PostInvokeExecutionTime}
+        postinvoke CPU time(sec)  : {matTime.PostInvokeCpuTime}
+        postinvoke wait%          : {postwaitrate:.2f}%        
+        """.strip() if not ifjson else jj
+
+    print(template)
 
 
 def resetStatistics(cache):
@@ -1699,9 +1754,7 @@ def cleanCache(cache):
 def clearCache(cache):
     with cache.lock, cache.statistics.lock, cache.statistics as stats:
         cache.clear(stats)
-        stats.setManifestCount(0)
-        stats.setManifestEntryCount(0)
-
+        stats.clear_stat()
 
 # Returns pair:
 #   1. set of include filepaths
@@ -1793,9 +1846,16 @@ def start_server(close = True):
 
 windll.kernel32.GetCommandLineW.restype = wintypes.LPCWSTR
 
+
+def filter_project(g_project_name: str):
+    if g_project_name and g_project_name.lower().find(r'cmakefiles\cmaketmp\cm') > 0:
+        printTraceStatement(f"Skip processing {g_project_name}")
+        sys.exit(5)
+
 def _main():
     parser = ArgumentParser()
     parser.add_argument('-s', '--stat', action='store_true', help='print cache statistics')
+    parser.add_argument('-j', '--jsonstat', action='store_true', help='print cache statistics')
     parser.add_argument('-c', '--clean', dest='clean', action='store_true', help='Cache cleaned')
     parser.add_argument('-C', '--clear', dest='clear', action='store_true', help='Cache cleared')
     parser.add_argument('-z', '--reset', dest='reset', action='store_true', help='reset cache statistics')
@@ -1804,17 +1864,22 @@ def _main():
     parser.add_argument('-f', '--project', dest='project', type=str)
     parser.add_argument('-p', '--prepare', action='store_true')
     parser.add_argument('-q', '--collect', action='store_true')
+    parser.add_argument('-m', '--prelink', action='store_true')
+    parser.add_argument('-n', '--postlink', action='store_true')
     parser.add_argument('-d', '--debug', action='store_true')
     parser.add_argument('-E', '--exit_svr', action='store_true')
     parser.add_argument('-S', '--start_svr', action='store_true')
     parser.add_argument('--show_svr', action='store_true')
+    parser.add_argument('--show_svr2', action='store_true')
 
     args, other_args = parser.parse_known_args()
 
     global g_project_name
     g_project_name = args.project or ''
+    filter_project(g_project_name)
     cache = Cache()
     args.stat and printStatistics(cache)
+    args.jsonstat and printStatistics(cache, True)
     args.clean and cleanCache(cache)
     args.clear and clearCache(cache)
     args.reset and resetStatistics(cache)
@@ -1823,6 +1888,8 @@ def _main():
     args.start_svr and start_server()
     if args.show_svr:
         print(control_server('count',read=True))
+    if args.show_svr2:
+        print(control_server('count2',read=True))
 
     if args.max_size and args.max_size > 0:
         with cache.lock, cache.configuration as cfg:
@@ -1841,6 +1908,11 @@ def _main():
         return processPreInvoke(cache, other_args, compiler)
     elif args.collect:
         return processPostInvoke(cache, other_args, compiler)
+    elif args.prelink:
+        return processPreLink(cache, other_args, compiler)
+    elif args.postlink:
+        return processPostLink(cache, other_args, compiler)
+
 
     printTraceStatement("Found real compiler binary at '{0!s}'".format(compiler))
 
@@ -1867,17 +1939,6 @@ def printErrStr(message):
     with OUTPUT_LOCK:
         print(message, file=sys.stderr)
 
-
-def parse_input(args):
-    content = read_file(args[0])
-    delete_tmp_file(args[0])
-    content = [x.strip() for x in content.split('^^')]
-    content = [x.split('|') for x in content if x.strip()]
-    content = sorted(content, key=lambda x: x[2], reverse=True)
-    return [CompilerItem(*x) for x in content]
-
-#CompilerEntry = namedtuple('CompilerEntry', ['file', 'project', 'cmdline', 'output' , 'dependency', 'dependency_hash'])
-
 @dataclass
 class CompilerEntry:
     manifest_hash: str =None;
@@ -1902,60 +1963,9 @@ class CompilerEntry:
     def generate_dependency_hash(files):
         return ManifestRepository.getIncludesContentHashForFiles(files)
 
-
-@functools.lru_cache(maxsize=16)
-def cmd_normalize(cmdline):
-    return re.subn('\s{2,}/', ' /', cmdline)[0]
-
-pch_dp_map = dict()
-
-@dataclass
-class CompilerItem(Statistics):
-    item_spec: str;full_path: str; pch_state: str
-    pch_hdr: str
-    cmdline: str
-    dependency: List[str] = None
-    output: List[str] = None
-    entry : bool = None
-    hash: str = None
-    parent = None
-
-    @classmethod
-    def set_compiler(cls, compiler):
-        cls.compiler_hash = getCompilerHash(compiler)
-        cls.skip_get = 'CLCACHE_SKIPGET' in os.environ
-
-    def __post_init__(self):
-        if self.pch_hdr:
-            self.pch_hdr = self.pch_hdr.strip().strip('"').upper()
-        dependency = self.dependency.split('*') if self.dependency else []
-        if self.is_usePch():
-            dependency = set((x for x in dependency if not x.endswith('.PCH')))
-        else:
-            dependency = set(dependency)
-
-        if self.is_genPch():
-            assert self.pch_hdr not in pch_dp_map
-            pch_dp_map[self.pch_hdr] = self
-        elif self.is_usePch():
-            self.parent = pch_dp_map[self.pch_hdr]
-
-        self.dependency = sorted(dependency)
-        self.output = sorted(self.output.split('*') if self.output else [])
-        self.cmdline = cmd_normalize(self.cmdline)
-
-    def is_genPch(self):
-        return self.pch_state == '2'
-    def is_usePch(self):
-        return self.pch_state == '1'
-
-    def manifest_hash(self):
-        if self.hash: return self.hash
-        additionalData = [self.compiler_hash, self.cmdline,self.full_path, str(ManifestRepository.MANIFEST_FILE_FORMAT_VERSION)]
-        if self.parent:
-            additionalData += [self.parent.manifest_hash(), self.parent.entry.dependency_hash ]
-        self.hash = getFileHash(self.full_path, '|'.join(additionalData))
-        return self.hash
+class hash_files_mixin:
+    file_debug = 'CLCACHE_FILEDEBUG' in os.environ
+    _pending_add_buffer = []
 
     def manifest_hit(self, cache):
         if self.entry is not None:
@@ -1989,25 +1999,6 @@ class CompilerItem(Statistics):
                 self.incDependencyMissingCount()
         return False
 
-    def retrieve_hit(self, cache):
-        entry = self.manifest_hit(cache)
-        if not entry: return
-        for item in entry.output:
-            r = self.get_object(cache, item[1], item[0])
-            if not r: return False
-        return True
-
-    def manifest_entry(self) -> CompilerEntry:
-        assert self.output
-        hashes = getFileHashes(self.dependency)
-         #safeIncludes = [collapseBasedirToPlaceholder(path) for path in sortedIncludePaths]
-        output = [ list(y) for y in  zip(self.output, [getFileHash(x) for x in self.output]) ]
-        self.entry = CompilerEntry(manifest_hash = self.manifest_hash(),
-            file=self.full_path, cmdline=self.cmdline,
-                              output=output, dependency=self.dependency,
-                              dependency_hash=None, project=g_project_name, compiler=self.compiler_hash, parent=self.parent)
-        return self.entry
-
     def ensure_output(self, cache):
         entry = self.manifest_entry()
         add_success = False
@@ -2036,9 +2027,11 @@ class CompilerItem(Statistics):
         return
 
     def add_object(self, cache : Cache, key, file):
-        if self.skip_get:
+        if self.local_cmp:
             self.compare_hash_file(key, file)
         printTraceStatement("Adding file {} to cache using key {}".format(file, key))
+        if self.opt_get:
+            self._pending_add_buffer.append((file, key))
         with cache.lockFor(key):
             if cache.hasEntry(key):
                 printTraceStatement("Duplicate File {} with key {} already in cache".format(file, key))
@@ -2055,21 +2048,40 @@ class CompilerItem(Statistics):
                 return 0
         return size
 
-    def get_object(self, cache : Cache, key, file):
+    def get_object(self, cache : Cache, key, file, skip = False):
+        DeleteFileW(file)
         with cache.lockFor(key):
             if cache.hasEntry(key):
-                if os.path.exists(file):
-                    os.remove(file)
-                if self.skip_get:
-                    return self.get_hash_file(key ,file)
+                if skip:
+                    if self.local_cmp or not self.opt_get:
+                        return self.get_hash_file(key, file)
+                    else:
+                        return True
                 printTraceStatement("Get file keyed {} to {}".format(key, file))
-                return cache.getEntry2(key, file)
+                return self.real_get_file(cache, file, key)
             else:
                 printTraceStatement("Failed to get file keyed {} to {}".format(key, file))
                 self.incFailureGetObj()
 
-    @staticmethod
-    def get_hash_file(key, file):
+    def real_get_file(self, cache, file, key):
+        r = cache.getEntry2(key, file)
+        if r and self.file_debug:
+            with open(file,'rb') as f:
+                rkey = HashAlgorithm(f.read()).hexdigest()
+                assert rkey == key, f"{file} hash incorrect key:{key} correct: {rkey}"
+        return r
+
+    def retrieve_hit(self, cache):
+        entry = self.manifest_hit(cache)
+        if not entry: return
+        for file, key in entry.output:
+            r = self.get_object(cache, key, file, self.skip_get)
+            if not r: return False
+            elif self.opt_get:
+                self._pending_add_buffer.append((file, key))
+        return True
+
+    def get_hash_file(self, key, file):
         filename = ''.join((file, '.hash.txt'))
         with open(filename, 'wb') as f:
             printTraceStatement("Generate hash file {} to {}".format(key, filename))
@@ -2077,6 +2089,7 @@ class CompilerItem(Statistics):
         return True
 
     def compare_hash_file(self, key, file):
+        if file.endswith('.PDB'): return
         filename = ''.join((file, '.hash.txt'))
         try:
             with open(filename, 'rb') as f:
@@ -2086,11 +2099,213 @@ class CompilerItem(Statistics):
         except:
             pass
 
+    @classmethod
+    def add_pending_buffer(self):
+        result = []
+        for i in self._pending_add_buffer:
+            result.append('|'.join(i))
+        if result:
+            printTraceStatement("Add {} files to buffer.".format(len(result)))
+            control_server('add_buffer_hash','\n'.join(result))
+
+    def get_from_server(self, files: List[str], missing: List = []):
+        items = control_server('get_buffer_hash', '\n'.join(files) , read=True).splitlines()
+        if len(items) < len(files):
+            raise IncludeNotFoundException
+        all = ''
+        for i, item in enumerate(items):
+            h, r = item.split('|')
+            all += h
+            if r == '0':
+                missing.append((h, files[i]))
+        return HashAlgorithm(all.encode('utf-8')).hexdigest()
+
+    def generate_dependency_hash(self, files: List[str], missing: List = []) -> str:
+        if self.opt_get:
+            return self.get_from_server(files, missing)
+        hasher = HashAlgorithm()
+        #todo
+        for file in files:
+            hashfilename = ''.join((file, '.hash.txt'))
+            if os.path.exists(file):
+                with open(file, 'rb') as inFile:
+                    hasher.update(HashAlgorithm(inFile.read()).hexdigest().encode('utf-8'))
+            elif os.path.exists(hashfilename):
+                with open(hashfilename, 'rb') as f:
+                    h = f.read()
+                    hasher.update(h)
+                    missing.append((h.decode('utf-8'), file))
+            else:
+                raise IncludeNotFoundException
+        return hasher.hexdigest()
+
+@dataclass
+class LinkerEntry(hash_files_mixin):
+    manifest_hash: str =None;
+    file: str =None;project: str= None;tool:str= None; cmdline: str =None;
+    output: List =None;
+    dependency_hash: str=None;dependency: List= None;
+    input: List = None;
+
+    def _asdict(self):
+        return asdict(self)
+
+    def __post_init__(self):
+        if not self.dependency_hash:
+            self.dependency_hash = self.generate_dependency_hash(self.dependency)
+
+    def match_local(self):
+        return self.dependency_hash == self.generate_dependency_hash(self.dependency)
+
+
+
+@functools.lru_cache(maxsize=128)
+def cmd_normalize(cmdline, eev):
+    cmdline = ' '.join((os.environ.get(eev, ''), cmdline, os.environ.get(f'_{eev}_', '')))
+    return re.subn('\s{2,}/', ' /', cmdline.strip())[0]
+
+pch_dp_map = dict()
+
+
+def tell_flag(env:str, flag: int):
+    return int(os.environ.get(env, '0')) & flag == flag
+
+@dataclass
+class CompilerItem(Statistics, hash_files_mixin):
+    item_spec: str;full_path: str; pch_state: str
+    pch_hdr: str
+    cmdline: str
+    dependency: List[str] = None
+    output: List[str] = None
+    entry : bool = None
+    hash: str = None
+    parent = None
+
+    @classmethod
+    def set_tool(cls, project, tool, *platform_version):
+        cls.platform_version = platform_version
+        cls.project = project
+        cls.compiler_hash = getCompilerHash(tool, *platform_version)
+        cls.skip_get = tell_flag('CLCACHE_SKIPGET', 1)
+        cls.local_cmp = cls.skip_get and tell_flag('CLCACHE_FORCEMISS', 1)
+        cls.opt_get = g_use_clserver and tell_flag('_USECCACHE', 2) and not cls.local_cmp
+
+    def __post_init__(self):
+        if self.pch_hdr:
+            self.pch_hdr = self.pch_hdr.strip().strip('"').upper()
+        dependency = self.dependency.split('*') if self.dependency else []
+        if self.is_usePch():
+            dependency = set((x for x in dependency if not x.endswith('.PCH')))
+        else:
+            dependency = set(dependency)
+
+        if self.is_genPch():
+            assert self.pch_hdr not in pch_dp_map
+            pch_dp_map[self.pch_hdr] = self
+        elif self.is_usePch():
+            self.parent = pch_dp_map[self.pch_hdr]
+
+        self.dependency = sorted(dependency)
+        self.output = sorted(self.output.split('*')) if self.output else []
+        self.cmdline = cmd_normalize(self.cmdline, 'CL')
+
+    def is_genPch(self):
+        return self.pch_state == '2'
+    def is_usePch(self):
+        return self.pch_state == '1'
+
+    def manifest_hash(self):
+        if self.hash: return self.hash
+        additionalData = [self.compiler_hash, self.cmdline,self.full_path, os.path.dirname(self.project).upper(), str(ManifestRepository.MANIFEST_FILE_FORMAT_VERSION)]
+        if self.parent:
+            additionalData += [self.parent.manifest_hash(), self.parent.entry.dependency_hash ]
+        self.hash = getFileHash(self.full_path, '|'.join(additionalData))
+        return self.hash
+
+    def manifest_entry(self) -> CompilerEntry:
+        assert self.output
+        hashes = getFileHashes(self.dependency)
+         #safeIncludes = [collapseBasedirToPlaceholder(path) for path in sortedIncludePaths]
+        output = [ list(y) for y in  zip(self.output, [getFileHash(x) for x in self.output]) ]
+        self.entry = CompilerEntry(manifest_hash = self.manifest_hash(),
+            file=self.full_path, cmdline=self.cmdline,
+                              output=output, dependency=self.dependency,
+                              dependency_hash=None, project=self.project, compiler=self.compiler_hash, parent=self.parent)
+        return self.entry
+
     def __hash__(self):
         return self.item_spec.__hash__()
 
     def __eq__(self, other):
         return self.item_spec == other.item_spec
+
+
+@dataclass
+class LinkerItem(Statistics, hash_files_mixin):
+    inputs: str;cmdline: str; full_path: str;
+    dependency: List[str] = None
+    output: List[str] = None
+    entry : bool = None
+    hash: str = None
+
+    @classmethod
+    def set_tool(cls, project, tool, *platform_version):
+        cls.platform_version = platform_version
+        cls.project = project
+        cls.tool_hash = getCompilerHash(tool, *platform_version)
+        cls.toolname = os.path.basename(tool).split('.')[0].title()
+        cls.skip_get = tell_flag('CLCACHE_FORCEMISS', 2) and tell_flag('CLCACHE_SKIPGET', 2)
+        cls.local_cmp = cls.skip_get
+        LinkerEntry.opt_get = cls.opt_get = g_use_clserver and not cls.local_cmp
+
+
+    def __post_init__(self):
+        self.dependency = sorted(self.dependency.split('*')) if self.dependency else []
+        self.inputs = sorted(set(self.inputs.split('*'))) if self.inputs else []
+        self.output = sorted(self.output.split('*')) if self.output else []
+        self.cmdline = ' '.join((self.toolname, cmd_normalize(self.cmdline, 'LINK')))
+        self.pending_objs = []
+
+
+    def manifest_hash(self):
+        if self.hash: return self.hash
+        objHahs = self.generate_dependency_hash(self.inputs, self.pending_objs)
+        assert objHahs
+        additionalData = self.inputs + [self.tool_hash, self.cmdline, os.path.dirname(self.project.upper()), objHahs, str(ManifestRepository.MANIFEST_FILE_FORMAT_VERSION)]
+        self.hash = HashAlgorithm('|'.join(additionalData).encode('utf-8')).hexdigest()
+        return self.hash
+
+    def manifest_entry(self) -> CompilerEntry:
+        assert self.output
+        hashes = self.generate_dependency_hash(self.dependency)
+        assert hashes
+         #safeIncludes = [collapseBasedirToPlaceholder(path) for path in sortedIncludePaths]
+        output = [ list(y) for y in  zip(self.output, [getFileHash(x) for x in self.output]) ]
+        self.entry = LinkerEntry(manifest_hash = self.manifest_hash(),
+                                 file=self.full_path, cmdline=self.cmdline,
+                                 output=output, dependency=self.dependency,
+                                 dependency_hash=None, project=self.project, tool=self.tool_hash, input=self.inputs)
+        return self.entry
+
+    def retrieve_pendings(self, cache):
+        for key, file in self.pending_objs:
+            r = self.get_object(cache, key, file)
+            if not r: return False
+        return True
+
+def parse_input(args: object, targetcls: object = CompilerItem) -> object:
+    content = read_file(args[0])
+    delete_tmp_file(args[0])
+    content = [x.strip() for x in content.split('^^')]
+    content = [x.split('|') for x in content if x.strip()]
+    targetcls.set_tool(*content[0])
+    content = content[1:]
+    if len(content) > 1:
+        content = sorted(content, key=lambda x: x[2], reverse=True)
+    return [targetcls(*x) for x in content]
+
+#CompilerEntry = namedtuple('CompilerEntry', ['file', 'project', 'cmdline', 'output' , 'dependency', 'dependency_hash'])
+
 
 def delete_tmp_file(path):
     if not 'MSBUILDPRESERVETOOLTEMPFILES' in os.environ:
@@ -2100,8 +2315,7 @@ def processPreInvoke(cache, args, compiler):
     printTraceStatement("PreInvoke {}".format(windll.kernel32.GetCommandLineW()))
     with cache.statistics.lock, cache.statistics as stats:
         stats.incPreInvokeLauchCount()
-    skip_pre = 'CLCACHE_FORCEMISS' in os.environ
-    CompilerItem.set_compiler(compiler)
+    skip_pre = tell_flag('CLCACHE_FORCEMISS', 1)
     content = parse_input(args)
     miss = set()
     for item in content:
@@ -2121,6 +2335,7 @@ def processPreInvoke(cache, args, compiler):
         success = item.retrieve_hit(cache)
         if not success:
             miss.add(item)
+    hash_files_mixin.add_pending_buffer()
     hits -= miss
     print("*".join((x.item_spec for x in ( () if skip_pre else hits))), end='*')
     with cache.statistics.lock, cache.statistics as stats:
@@ -2146,7 +2361,6 @@ def processPostInvoke(cache, args, compiler):
     with cache.configuration as cfg:
         cleanup = cacheSize >= cfg.maximumCacheSize()
 
-    CompilerItem.set_compiler(compiler)
     content = parse_input(args)
     if cleanup:
         printTraceStatement('Cache size {} limit reached. Need cleaning.'.format(cacheSize))
@@ -2154,6 +2368,7 @@ def processPostInvoke(cache, args, compiler):
     else:
         for item in content:
             item.ensure_output(cache)
+    hash_files_mixin.add_pending_buffer()
 
     with cache.statistics.lock, cache.statistics as stats:
         stats.updateStats(CompilerItem)
@@ -2163,6 +2378,59 @@ def processPostInvoke(cache, args, compiler):
         stats.incPostInvokeCpuTime(cputime)
     return 0
 
+
+def processPreLink(cache, args, compiler):
+    printTraceStatement("PreLink {}".format(windll.kernel32.GetCommandLineW()))
+    with cache.statistics.lock, cache.statistics as stats:
+        p = getattr(stats,'incPreInvokeLauchCount'+ os.path.basename(compiler).split('.')[0].title())
+        callable(p) and p()
+    skip_pre = tell_flag('CLCACHE_FORCEMISS', 2)
+    item = parse_input(args, LinkerItem)[0]
+    hit = item.manifest_hit(cache)
+    hit or item.retrieve_pendings(cache)
+    hit = hit and item.retrieve_hit(cache)
+    item.add_pending_buffer()
+    print(item.full_path if hit and not skip_pre else '', end='*')
+
+    with cache.statistics.lock, cache.statistics as stats:
+        if not hit:
+            item.incProjectMiss()
+        else:
+            item.incProjectHits()
+        item.incPreInvokeExitCount()
+        alltime, cputime = diff_time()
+        item.incPreInvokeExecutionTime(alltime)
+        item.incPreInvokeCpuTime(cputime)
+        stats.updateStats(LinkerItem)
+    return 0
+
+
+def processPostLink(cache, args, compiler):
+    printTraceStatement("PostLink {}".format(windll.kernel32.GetCommandLineW()))
+    cacheSize = 0
+    cleanup = False
+    with cache.statistics.lock, cache.statistics as stats:
+        if compiler:
+            getattr(stats,'incPostInvokeLauchCount'+ os.path.basename(compiler).split('.')[0].title())()
+        cacheSize = stats.currentCacheSize()
+    with cache.configuration as cfg:
+        cleanup = cacheSize >= cfg.maximumCacheSize()
+
+    content = parse_input(args, LinkerItem)[0]
+    if cleanup:
+        printTraceStatement('Cache size {} limit reached. Need cleaning.'.format(cacheSize))
+        cleanCache(cache)
+    else:
+        content.ensure_output(cache)
+        content.add_pending_buffer()
+
+    with cache.statistics.lock, cache.statistics as stats:
+        content.incPostInvokeExitCount()
+        alltime, cputime = diff_time()
+        content.incPostInvokeExecutionTime(alltime)
+        content.incPostInvokeCpuTime(cputime)
+        stats.updateStats(LinkerItem)
+    return 0
 
 def list_dir(dir):
     def _filter_files(data, black_list, white_list):
@@ -2221,6 +2489,7 @@ def processDebug(cache: Cache, args):
     parser.add_argument('--obj', dest='obj_name', type=str)
     parser.add_argument('--projects', action='store_true')
     parser.add_argument('--negate', action='store_true')
+    parser.add_argument('--soft', action='store_true')
     parser.add_argument('--list', type=str)
 
     args, other_args = parser.parse_known_args(args)
@@ -2241,15 +2510,20 @@ def processDebug(cache: Cache, args):
 
     count = 0
     entries = dict()
+    linkers = dict()
     objs = set()
     for filename in glob.iglob(r'{}\manifests\**\*.json'.format(cache.strategy.dir), recursive=True):
         hash = os.path.basename(filename).rstrip('.json')
-        b = json.load(open(filename))
+        b = json.load(open(filename,'rb'))
         cls = globals()[b['type']]
         for e in b['entries'] :
             i = cls(**e)
-            entries['|'.join((hash, i.dependency_hash))] = i
+            if cls is CompilerEntry:
+                entries['|'.join((hash, i.dependency_hash))] = i
+            elif cls is LinkerEntry:
+                linkers['|'.join((hash, i.dependency_hash))] = i
             count += 1
+
 
     found = dict()
     headerfound = dict()
@@ -2268,19 +2542,44 @@ def processDebug(cache: Cache, args):
 
     found.update(headerfound)
 
+    outputs = set( [item[0] for sublist in found.values() for item in sublist.output])
+    found2 = dict()
+    found2_output = set()
+    newadd = True
+    while newadd:
+        aaa = 0
+        for k, v in linkers.items():
+            add = False
+            if file_name and re.search(file_name, v.file, re.IGNORECASE) :
+                add = True
+            elif file_name and re.search(file_name, ' '.join([i for i in v.input]), re.IGNORECASE):
+                add = True
+            elif cmdline and  re.search(cmdline, v.cmdline):
+                add = True
+            aa = outputs | found2_output
+            other = set( [i for i in v.input] + [i for i in v.dependency])
+            if (not aa.isdisjoint(other) or add) and k not in found2:
+                found2[k] = v
+                if v.cmdline.startswith('Lib') or args.soft:
+                    found2_output.update(set([ i[0] for i in v.output]) )
+                aaa += 1
+        newadd = (aaa > 0)
+
     # for filename in glob.iglob(r'U:\bin\cache\objects\**\object', recursive=True):
     #     hash = filename.split('\\')[-2]
     #     objs.add(hash)
     if args.negate:
         found = {x:y for x,y in entries.items() if x not in found}
+        found2 = {x:y for x,y in linkers.items() if x not in found2}
 
     if args.projects:
-        projs = set([i.project.split('(')[0] for i in found.values() if i.project])
+        projs = set([i.project.split('(')[0] for i in found.values() if i.project] + [i.project.split('(')[0] for i in found2.values() if i.project] )
         print ('\n'.join(projs))
         print('Total:{}'.format(len(projs)))
     else:
-        print('\n'.join( [i.file for i in found.values() ] ))
-        print('Total:{}'.format(len(found)))
+        result = set([i.file for i in found.values()]+ [i.file for i in found2.values()])
+        print('\n'.join( result ))
+        print('Total:{}'.format(len(result)))
     return 0
 
 def processCompileRequest(cache, compiler, args):
