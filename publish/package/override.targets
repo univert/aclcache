@@ -12,6 +12,7 @@
       <_USEBREPRO Condition="$(_USEBREPRO) == ''">1</_USEBREPRO>
       <_USENOPDB Condition="$(_USEZ7) == '' and $(_USENOPDB) == ''">1</_USENOPDB>
       <_USENOPDB Condition="$(_USEZ7) != ''"></_USENOPDB>
+      <_FORCEBREPRO Condition="'$(CI_PROJECT)' == 'Fabric' and '$(_FORCEBREPRO)' ==''">1</_FORCEBREPRO>
     </PropertyGroup>
     <UsingTask Condition="$(_USECCACHE) != '' or $(_STATLOG) != ''" TaskName="AcadExtension.TimerTask" AssemblyFile="$(AclcacheFilePath)"/>
     <UsingTask Condition="$(_USEBREPRO) != ''" TaskName="RegexFileUpdate" AssemblyFile="$(AclcacheFilePath)"/>
@@ -60,7 +61,8 @@
         </Link>
         <!--/PROFILE use /BREPRO to produce identical outputs from same source code-->
         <ClCompile Condition="$(_USEBREPRO) == '1'">
-           <AdditionalOptions Condition="'%(CompileAsManaged)' != 'true'" >%(AdditionalOptions) /wd5048 /experimental:deterministic</AdditionalOptions>
+           <AdditionalOptions Condition="'%(CompileAsManaged)' != 'true'" >%(AdditionalOptions) /experimental:deterministic</AdditionalOptions>
+           <AdditionalOptions Condition="'%(CompileAsManaged)' != 'true' and '$(_FORCEBREPRO)' == ''" >%(AdditionalOptions) /wd5048</AdditionalOptions>
            <AdditionalOptions Condition="'%(CompileAsManaged)' == 'true'" >%(AdditionalOptions) /Brepro</AdditionalOptions>
         </ClCompile>
         <Link Condition="$(_USEBREPRO) == '1'">
