@@ -558,7 +558,7 @@ class CacheFileStrategy:
         self.statistics = Statistics(os.path.join(self.dir, "stats.txt"))
 
     def __str__(self):
-        return "Disk cache at {}".format(self.dir)
+        return "{}".format(self.dir)
 
     @property # type: ignore
     @contextlib.contextmanager
@@ -1652,12 +1652,10 @@ def printStatistics2(cache, ifjson= False):
     postwaitrate = (1 - PostInvokeCpuTime /  PostInvokeExecutionTime) * 100 if PostInvokeExecutionTime else 0
     prewaitrate = (1 - PreInvokeCpuTime /  PreInvokeExecutionTime) * 100 if PreInvokeExecutionTime else 0
 
-    list(map(lambda *x: sum(x), [1, 4, 2, 3, 4, 2], [9, 2], [33, 1]))
     AllMiss = stats.EntryMiss + stats.HashMiss + stats.CppRecompiledFromPchChange + stats.FailureGetObj
     allfiles = (stats.EntryHits + AllMiss)
     fpercent = 100* stats.EntryHits / allfiles if allfiles  else 0
     frecompile = 100* (AllMiss + stats.PchRecompiledFromCppChange) / allfiles if allfiles else 0
-    AddObjSize = stats.AddObjSize / (1024 * 1024)
 
     def tripple(op = lambda *x: ''.join(map(str,x)) ):
         def getter(*names):
@@ -1677,7 +1675,7 @@ def printStatistics2(cache, ifjson= False):
 
         def __call__(self, *names):
             a, b, c = self.val(*names)
-            ss = "{{a{}}}{{self.suffix}} {{b{}}}{{self.suffix}} {{c{}}}{{self.suffix}}".format(self.fom, self.fom, self.fom)
+            ss = "{{a{}}} {{b{}}} {{c{}}}".format(self.fom, self.fom, self.fom)
             return eval(f'f"""{ss}"""')
 
     mat = fmat()
@@ -1699,8 +1697,8 @@ def printStatistics2(cache, ifjson= False):
       #manifest count             : {mat.ManifestCount}
       #manifest entry             : {mat.ManifestEntryCount}
         
-      file hit rate               : {fpercent:.2f}%
-      file rebuild rate           : {frecompile:.2f}%
+      file hit rate%              : {fmat(lambda *x: (x[-1] / sum(x))*100.0,'',':<9.2f')('EntryMiss', 'HashMiss', 'CppRecompiledFromPchChange','FailureGetObj','EntryHits')}
+      file rebuild rate%          : {frecompile:.2f}
       #file hits                  : {mat.EntryHits}
       #manifest hash hits         : {mat.HashHits}
       #file misses                : {fmat(lambda *x: sum(x))('EntryMiss', 'HashMiss', 'CppRecompiledFromPchChange','FailureGetObj')}
