@@ -12,7 +12,6 @@
       <_USEBREPRO Condition="$(_USEBREPRO) == ''">1</_USEBREPRO>
       <_USENOPDB Condition="$(_USEZ7) == '' and $(_USENOPDB) == ''">1</_USENOPDB>
       <_USENOPDB Condition="$(_USEZ7) != ''"></_USENOPDB>
-      <_FORCEBREPRO Condition="'$(CI_PROJECT)' == 'Fabric' and '$(_FORCEBREPRO)' ==''">1</_FORCEBREPRO>
     </PropertyGroup>
     <UsingTask Condition="$(_USECCACHE) != '' or $(_STATLOG) != ''" TaskName="AcadExtension.TimerTask" AssemblyFile="$(AclcacheFilePath)"/>
     <UsingTask Condition="$(_USEBREPRO) != ''" TaskName="RegexFileUpdate" AssemblyFile="$(AclcacheFilePath)"/>

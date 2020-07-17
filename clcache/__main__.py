@@ -1697,7 +1697,7 @@ def printStatistics2(cache, ifjson= False):
       #manifest count             : {mat.ManifestCount}
       #manifest entry             : {mat.ManifestEntryCount}
         
-      file hit rate%              : {fmat(lambda *x: (x[-1] / sum(x))*100.0,'',':<9.2f')('EntryMiss', 'HashMiss', 'CppRecompiledFromPchChange','FailureGetObj','EntryHits')}
+      file hit rate%              : {fmat(lambda *x: (x[-1] / sum(x))*100.0 if sum(x)>0 else 0 ,'',':<9.2f')('EntryMiss', 'HashMiss', 'CppRecompiledFromPchChange','FailureGetObj','EntryHits')}
       file rebuild rate%          : {frecompile:.2f}
       #file hits                  : {mat.EntryHits}
       #manifest hash hits         : {mat.HashHits}
