@@ -1687,6 +1687,7 @@ def printStatistics2(cache, ifjson= False):
     jj['cache_miss'] = AllMiss
     jj['cache_hit_direct'] = stats.EntryHits
     jj['cache_directory'] = str(cache)
+    jj['cache_rebuild'] = 1 if tell_flag('CLCACHE_FORCEMISS', 1) else 0
     jj = json.dumps(jj, indent=2)
     template = f"""
     clcache statistics:
