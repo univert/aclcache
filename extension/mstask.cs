@@ -7,14 +7,14 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Build.Execution;
-using static AcadExtension.Utils;
-using static AcadExtension.CacheStrategy;
+using static Aclcache.Utils;
+using static Aclcache.CacheStrategy;
 using Microsoft.Build.Framework;
 using Microsoft.Build.CPPTasks;
 using Microsoft.Build.Utilities;
 using Microsoft.Win32.SafeHandles;
 
-namespace AcadExtension
+namespace Aclcache
 {
     public class CsvFileWriter : StreamWriter
     {
@@ -72,7 +72,7 @@ namespace AcadExtension
         public static Encoding _currentOemEncoding => _currentOemEncoding_l ?? (_currentOemEncoding_l = Encoding.GetEncoding(GetOEMCP()));
         public static string GetClCacheLocation()
         {
-            if (Environment.GetEnvironmentVariable("CLCACHE_LOCATION") is string loc &&
+            if (Environment.GetEnvironmentVariable("ACLCACHE_LOCATION") is string loc &&
                 System.IO.Directory.Exists(loc))
             {
                 loc.TrimEnd('\\');
@@ -85,7 +85,7 @@ namespace AcadExtension
         public static string GetPythonLocation(string name = "python.exe")
         {
             string a;
-            if (Environment.GetEnvironmentVariable("CLCACHE_PYTHON") is string loc &&
+            if (Environment.GetEnvironmentVariable("ACLCACHE_PYTHON") is string loc &&
                 File.Exists(a = Path.Combine(loc, name)))
             {
                 return a;
@@ -330,6 +330,10 @@ namespace AcadExtension
             public bool CompileArtifactCollected { get; set; } = false;
             private IBuildEngine CurrentEngine;
             public CacheStrategy Strategy { get; set; } = CacheStrategy.None;
+            public string WindowsSDKVersion { get; set; } = null;
+            public bool ExcludeCommonDir { get; set; } = true;
+            public string VCVersion { get; set; } = null;
+         
             public static string Id(string path, int id)
             {
                 return $"{path}_{id}";
@@ -377,13 +381,13 @@ namespace AcadExtension
             public int InvokeClCache(string switches, out string result, bool wait = true)
             {
                 var proc = new System.Diagnostics.Process();
-                var cmdline = $" {_clcacheLocation}\\clcache.py {switches}";
+                var cmdline = $"-E \"{_clcacheLocation}\\aclcache.py\" {switches}";
                 proc.StartInfo = Utils.GetProcessStartInfo(_pythonLocation, cmdline, false);
 
                 int ExitCode = -1;
                 result = string.Empty;
 
-                LogMessage($"{_pythonLocation}{cmdline}");
+                LogMessage($"{_pythonLocation} {cmdline}");
                 if (wait)
                 {
                     string s = string.Empty;
@@ -435,7 +439,7 @@ namespace AcadExtension
                 if (CompileArtifacts == null) return;
                 State |= BuildState.ClCachePreInvoked;
                 var tmpfile = Utils.GetTemporaryFile(".1.txt");
-                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToCL))
+                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToCL, WindowsSDKVersion, VCVersion))
                 {
                     foreach (var item in CompileArtifacts)
                     {
@@ -444,7 +448,7 @@ namespace AcadExtension
                 }
                 if (System.IO.File.Exists(tmpfile))
                 {
-                    var exitcode = InvokeClCache($"-p {tmpfile} -b {PathToCL} -f {Desc}", out var ret);
+                    var exitcode = InvokeClCache($"-p \"{tmpfile}\" -b \"{PathToCL}\" -f \"{Desc}\"", out var ret);
                     if (exitcode == 0)
                     {
                         var lines = ret.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
@@ -468,7 +472,7 @@ namespace AcadExtension
 
                 var tmpfile = Utils.GetTemporaryFile(".2.txt");
                 bool something = false;
-                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToCL))
+                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToCL, WindowsSDKVersion, VCVersion))
                 {
                     foreach (var item in CompileArtifacts)
                     {
@@ -481,7 +485,7 @@ namespace AcadExtension
                 }
                 if (something)
                 {
-                    InvokeClCache($"-q {tmpfile} -b {PathToCL} -f {Desc}", out var ret, Strategy.HasFlag(AsyncCcache));
+                    InvokeClCache($"-q \"{tmpfile}\" -b \"{PathToCL}\" -f \"{Desc}\"", out var ret, Strategy.HasFlag(AsyncCcache));
                 }
                 else
                 {
@@ -510,13 +514,13 @@ namespace AcadExtension
                 this.LinkArtifact.Cmdline = tool.GenerateCommandLineExceptSwitches(new string[] { "Sources" }, VCToolTask.CommandLineFormat.ForTracking);
                 this.LinkArtifact.MainOut = (new TaskItem(output)).GetMetadata("FullPath").ToUpper();
                 var tmpfile = Utils.GetTemporaryFile(".3.txt");
-                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToLinker))
+                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToLinker, WindowsSDKVersion, VCVersion))
                 {
                     writer.WriteRow(string.Join("*", LinkArtifact.Input.Concat(LinkArtifact.AdditionalInput)), LinkArtifact.Cmdline, LinkArtifact.MainOut);
                 }
                 if (System.IO.File.Exists(tmpfile))
                 {
-                    var exitcode = InvokeClCache($"-m {tmpfile} -b {PathToLinker} -f {Desc}", out var ret);
+                    var exitcode = InvokeClCache($"-m \"{tmpfile}\" -b \"{PathToLinker}\" -f \"{Desc}\"", out var ret);
                     BuildWorkFlow.DebugHook(5);
                     if (exitcode == 0)
                     {
@@ -537,7 +541,7 @@ namespace AcadExtension
                     return;
                 State |= BuildState.LinkerCachePostInvoked;
 
-                var depends = FilterInput(FilterLinkTlogs(SourceDependencies.DependencyTable), tool);
+                var depends = FilterInput(FilterLinkTlogs(SourceDependencies.DependencyTable), tool, tool.ExcludedInputPaths.Select(x => x.ItemSpec.ToUpper()));
                 var outputs = FilterLinkTlogs(SourceOutputs.DependencyTable).ToHashSet();
                 System.Diagnostics.Debug.Assert(outputs.Contains(LinkArtifact.MainOut));
                 var inputs = new HashSet<string>(LinkArtifact.Input.Concat(LinkArtifact.AdditionalInput));
@@ -554,7 +558,8 @@ namespace AcadExtension
                     {
                         var link = (Link)tool;
                         var liboutput = link.ImportLibrary != null ? (new TaskItem(link.ImportLibrary)).GetMetadata("FullPath").ToUpper() :
-                            Path.ChangeExtension(LinkArtifact.MainOut, ".EXP");
+                            LinkArtifact.MainOut;
+                        liboutput = Path.ChangeExtension(liboutput, ".EXP");
                         if (!inputs.Contains(liboutput) && File.Exists(liboutput))
                         {
                             outputs.Add(liboutput);
@@ -568,13 +573,13 @@ namespace AcadExtension
                 depends.ExceptWith(inputs);
 
                 var tmpfile = Utils.GetTemporaryFile(".4.txt");
-                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToLinker))
+                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToLinker, WindowsSDKVersion, VCVersion))
                 {
                     writer.WriteRow(string.Join("*", LinkArtifact.Input.Concat(LinkArtifact.AdditionalInput)), this.LinkArtifact.Cmdline, this.LinkArtifact.MainOut, string.Join("*", depends), string.Join("*", outputs));
                 }
                 if (System.IO.File.Exists(tmpfile))
                 {
-                    InvokeClCache($"-n {tmpfile} -b {PathToLinker} -f {Desc}", out var ret, Strategy.HasFlag(AsyncLinker));
+                    InvokeClCache($"-n \"{tmpfile}\" -b \"{PathToLinker}\" -f \"{Desc}\"", out var ret, Strategy.HasFlag(AsyncLinker));
                 }
             }
             public bool IsOldStyleClcache => Strategy.HasFlag(UseCCache) && Strategy.HasFlag(UseNoPch) && (Strategy.HasFlag(UseNoPdb) || Strategy.HasFlag(UseZ7));
@@ -595,13 +600,19 @@ namespace AcadExtension
                 CurrentEngine.LogErrorEvent(new BuildErrorEventArgs("ClCache", null, null, 1, 2, 3, 4, msg, null, null));
             }
 
-            internal HashSet<string> FilterInput(IEnumerable<string> inputs, TrackedVCToolTask task)
+            internal HashSet<string> FilterInput(IEnumerable<string> inputs, TrackedVCToolTask task, IEnumerable<string> commondir)
             {
-                //var test = task.ExcludedInputPaths.Select(x => x.ItemSpec.ToUpper()).ToHashSet();
-                var test = new HashSet<string>();
                 var tool = PathToCL ?? PathToLinker ?? task.invoke<string>("ComputePathToTool").ToUpper();
                 var tooldir = Path.GetDirectoryName(tool).ToUpper();
-                return inputs.Where(x => Path.GetDirectoryName(x) is string dir && !dir.StartsWith(tooldir) && !test.Contains(dir)).ToHashSet();
+                return inputs.Where(x => Path.GetDirectoryName(x) is string dir && !dir.StartsWith(tooldir) && !CommonDirTest(commondir, dir)).ToHashSet();
+            }
+
+            private bool CommonDirTest(IEnumerable<string> commondir, string dir)
+            {
+                if (ExcludeCommonDir)
+                    return commondir.Any(x => dir.StartsWith(x));
+                else
+                    return false;
             }
             
             internal IEnumerable<string> FilterLinkTlogs<T>(Dictionary<string, Dictionary<string, T>> deptable)
@@ -628,7 +639,7 @@ namespace AcadExtension
         }
 
         private static int? g_Aedebug_l;
-        private static int g_aedebug => (int)( g_Aedebug_l ?? (g_Aedebug_l = ((Environment.GetEnvironmentVariable("_aedebug") is string _tmp && Int32.TryParse(_tmp, out var t_Aedebug_l)) ? t_Aedebug_l : 0)));
+        private static int g_aedebug => (int)( g_Aedebug_l ?? (g_Aedebug_l = ((Environment.GetEnvironmentVariable("ACLCACHE_DEBUG") is string _tmp && Int32.TryParse(_tmp, out var t_Aedebug_l)) ? t_Aedebug_l : 0)));
         [System.Diagnostics.Conditional("DEBUG")] public static void DebugHook(int level = 1)
         {
             if (g_aedebug == level)
@@ -763,7 +774,7 @@ namespace AcadExtension
 
         public static void PopulateProjectStrategy(this Microsoft.Build.Framework.IBuildEngine engine, ProjectInfo project)
         {
-            var _useccache = ProjectProperty(engine, "_USECCACHE");
+            var _useccache = ProjectProperty(engine, "ACLCACHE_MODE");
             if (!string.IsNullOrEmpty(_useccache) && Int32.TryParse(_useccache, out var useccache))
             {
                 if ((useccache & 1) == 1)
@@ -774,16 +785,22 @@ namespace AcadExtension
                     project.Strategy |= CacheStrategy.UseNoPch;
                 if (!string.IsNullOrEmpty(ProjectProperty(engine, "_USENOPDB")))
                     project.Strategy |= CacheStrategy.UseNoPdb;
-                if (!string.IsNullOrEmpty(ProjectProperty(engine, "_USEZ7")))
+                if (!string.IsNullOrEmpty(ProjectProperty(engine, "ACLCACHE_USEZ7")))
                     project.Strategy |= CacheStrategy.UseZ7;
-                if (ProjectProperty(engine, "CLCACHE_SYNC") is string _async && Int32.TryParse(_async, out var async_v))
+                if (ProjectProperty(engine, "ACLCACHE_SYNC") is string _async && Int32.TryParse(_async, out var async_v))
                 {
                     if ((async_v & 1) == 1)
                         project.Strategy |= CacheStrategy.AsyncCcache;
                     if ((async_v & 2) == 2)
                         project.Strategy |= CacheStrategy.AsyncLinker;
                 }
-
+                if (!string.IsNullOrEmpty(ProjectProperty(engine, "ACLCACHE_INCLUDECOMMONDIR")))
+                    project.ExcludeCommonDir = false;
+                if (project.ExcludeCommonDir)
+                {
+                    project.WindowsSDKVersion = string.Join("|", ProjectProperty(engine, "TargetPlatformVersion"), ProjectProperty(engine, "NETFXSDK_Version"));
+                    project.VCVersion = ProjectProperty(engine, "VCToolsVersion");
+                }
             }
         }
         public static ProjectInfo BeginCompile(this Microsoft.Build.Framework.IBuildEngine engine)
@@ -851,7 +868,7 @@ namespace AcadExtension
                 :
             $"{project.Desc},{compile},{link},{lib},{other},0,0 \n";
             System.Console.WriteLine(r);
-            var file = ProjectProperty(engine, "_statlog");
+            var file = ProjectProperty(engine, "ACLCACHE_STATLOG");
             if (Int32.TryParse(file, out var _)) return;
 
             if (file != null)
@@ -921,6 +938,10 @@ namespace AcadExtension
             return ret;
         }
 
+        protected bool NotTLITLH(string fullOutputPath)
+        {
+            return !fullOutputPath.EndsWith(".TLH", StringComparison.OrdinalIgnoreCase) && !fullOutputPath.EndsWith(".TLI", StringComparison.OrdinalIgnoreCase);
+        }
         private void PostProcess()
         {
             if (!_project.IsNewStyleClcache) return;
@@ -928,6 +949,7 @@ namespace AcadExtension
 
             //var test = this.ExcludedInputPaths.Select(x => x.ItemSpec.ToUpper()).ToHashSet();
             var test = new HashSet<string>();
+            var commondir = ExcludedInputPaths.Select(x => x.ItemSpec.ToUpper());
             foreach (var item in this.Sources)
             {
                 var artifact = _project.CompileArtifactMap[item.ItemSpec];
@@ -935,14 +957,36 @@ namespace AcadExtension
                 System.Diagnostics.Debug.Assert(fullpath == artifact.FullPath);
                 var objfile = Path.GetFullPath(item.GetMetadata("ObjectFile")).ToUpper();
                 System.Diagnostics.Debug.Assert(!string.IsNullOrEmpty(objfile), $"ObjectFile of {item.ItemSpec} has no value");
-                var headers = _project.FilterInput(dep.DependencyTable[fullpath].Keys.Where(x => x != fullpath), this);
-                var outputs_all = SourceOutputs.OutputsForSource(item).Select(x => x.ItemSpec).ToHashSet();
+                var headers = dep.DependencyTable[fullpath].Keys.Where(x => x != fullpath).ToHashSet();
+                var outputs_all = SourceOutputs.OutputsForSource(item).Select(x => x.ItemSpec).Where(x => NotTLITLH(x)).ToHashSet();
                 var output = SourceOutputs.OutputsForSource(item).FirstOrDefault(x => x.ItemSpec.StartsWith(objfile));
                 System.Diagnostics.Debug.Assert(output != null, $"{item.ItemSpec} has no output");
                 artifact.Output.Add(output.ItemSpec);
                 headers.ExceptWith(outputs_all);  // remove inputs that are also outputs
+                headers = processTLB(headers, artifact);
+                headers = _project.FilterInput(headers, this, commondir);
                 artifact.Dependency = headers;
             }
+        }
+
+        private HashSet<string> processTLB(HashSet<string> headers, BuildWorkFlow.CompileArtifact artifact)
+        {
+            Lazy<Dictionary<string, string>> basenames = new Lazy<Dictionary<string, string>>(delegate {
+                Dictionary<string, string> _basenames = new Dictionary<string, string>();
+                headers.Where(x => NotTLITLH(x) && Path.HasExtension(x) && !x.EndsWith(".H") && !x.EndsWith(".CPP")).ToList().ForEach(x => _basenames[Path.GetFileNameWithoutExtension(x)] = x);
+                return _basenames;
+                });
+            HashSet<string> result = new HashSet<string>();
+            foreach (var item in headers)
+            {
+                string source = null;
+                if (NotTLITLH(item) || !basenames.Value.TryGetValue(Path.GetFileNameWithoutExtension(item), out source)) result.Add(item);
+                else
+                {
+                   artifact.Output.Add($"{source}>{item}");
+                }
+            }
+            return result;
         }
 
         protected override void RemoveTaskSpecificInputs(CanonicalTrackedInputFiles compactInputs)
@@ -981,7 +1025,7 @@ namespace AcadExtension
             if (_project.IsOldStyleClcache)
             {
                 pinfo.FileName = _pythonLocation2.Value;
-                pinfo.Arguments = $" {_clcacheLocation}\\clcache.py " + pinfo.Arguments;
+                pinfo.Arguments = $" \"{_clcacheLocation}\\aclcache.py\" " + pinfo.Arguments;
                 LogToolCommand(_pythonLocation2.Value + pinfo.Arguments);
             }
             return pinfo;

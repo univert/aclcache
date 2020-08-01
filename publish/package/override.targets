@@ -1,23 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
-      <AcadExtentionFilePath Condition="$(AcadExtentionFilePath) == ''">bin\AcadExtension.dll</AcadExtentionFilePath>
+      <AcadExtentionFilePath Condition="$(AcadExtentionFilePath) == ''">bin\aclcache.dll</AcadExtentionFilePath>
     </PropertyGroup>
     <PropertyGroup Condition="$(TargetFramework.StartsWith('netcore'))">
-      <_USECCACHE></_USECCACHE>
-      <_STATLOG></_STATLOG>
+      <ACLCACHE_MODE></ACLCACHE_MODE>
+      <ACLCACHE_STATLOG></ACLCACHE_STATLOG>
       <_USEBREPRO></_USEBREPRO>
     </PropertyGroup>
-    <PropertyGroup Condition="$(_USECCACHE) != ''">
+    <PropertyGroup Condition="$(ACLCACHE_MODE) != ''">
       <_USEBREPRO Condition="$(_USEBREPRO) == ''">1</_USEBREPRO>
-      <_USENOPDB Condition="$(_USEZ7) == '' and $(_USENOPDB) == ''">1</_USENOPDB>
-      <_USENOPDB Condition="$(_USEZ7) != ''"></_USENOPDB>
+      <_USENOPDB Condition="$(ACLCACHE_USEZ7) == '' and $(_USENOPDB) == ''">1</_USENOPDB>
+      <_USENOPDB Condition="$(ACLCACHE_USEZ7) != ''"></_USENOPDB>
     </PropertyGroup>
-    <UsingTask Condition="$(_USECCACHE) != '' or $(_STATLOG) != ''" TaskName="AcadExtension.TimerTask" AssemblyFile="$(AcadExtentionFilePath)"/>
+    <UsingTask Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != ''" TaskName="TimerTask" AssemblyFile="$(AcadExtentionFilePath)"/>
     <UsingTask Condition="$(_USEBREPRO) != ''" TaskName="RegexFileUpdate" AssemblyFile="$(AcadExtentionFilePath)"/>
-    <UsingTask Condition="$(_USECCACHE) != '' or $(_STATLOG) != ''" TaskName="CL" AssemblyFile="$(AcadExtentionFilePath)"/>
-    <UsingTask Condition="$(_USECCACHE) != '' or $(_STATLOG) != ''" TaskName="LIB" AssemblyFile="$(AcadExtentionFilePath)"/>
-    <UsingTask Condition="$(_USECCACHE) != '' or $(_STATLOG) != ''" TaskName="Link" AssemblyFile="$(AcadExtentionFilePath)"/>
+    <UsingTask Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != ''" TaskName="CL" AssemblyFile="$(AcadExtentionFilePath)"/>
+    <UsingTask Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != ''" TaskName="LIB" AssemblyFile="$(AcadExtentionFilePath)"/>
+    <UsingTask Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != ''" TaskName="Link" AssemblyFile="$(AcadExtentionFilePath)"/>
     <ItemDefinitionGroup Condition="$(_USENOPCH) == '1'">
       <ClCompile>
         <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -35,11 +35,11 @@
       <DebugType Condition="$(_USENOPDB) == '1'">None</DebugType>
     </PropertyGroup>
     <ItemDefinitionGroup>
-        <ClCompile Condition="$(_USEZ7) == '1'">
+        <ClCompile Condition="$(ACLCACHE_USEZ7) == '1'">
            <WholeProgramOptimization Condition="'$(Configuration)'=='Debug'">false</WholeProgramOptimization>
            <DebugInformationFormat>OldStyle</DebugInformationFormat>
         </ClCompile>
-        <Link  Condition="$(_USEZ7) == '1'">
+        <Link  Condition="$(ACLCACHE_USEZ7) == '1'">
           <!--LinkTimeCodeGeneration></LinkTimeCodeGeneration-->
           <OptimizeReferences Condition="$(MixedMode) != 'true' and '$(Configuration)'=='Debug'">false</OptimizeReferences>
           <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
@@ -61,7 +61,7 @@
         <!--/PROFILE use /BREPRO to produce identical outputs from same source code-->
         <ClCompile Condition="$(_USEBREPRO) == '1'">
            <AdditionalOptions Condition="'%(CompileAsManaged)' != 'true'" >%(AdditionalOptions) /experimental:deterministic</AdditionalOptions>
-           <AdditionalOptions Condition="'%(CompileAsManaged)' != 'true' and '$(_FORCEBREPRO)' == ''" >%(AdditionalOptions) /wd5048</AdditionalOptions>
+           <AdditionalOptions Condition="'%(CompileAsManaged)' != 'true' and '$(ACLCACHE_FORCEBREPRO)' == ''" >%(AdditionalOptions) /wd5048</AdditionalOptions>
            <AdditionalOptions Condition="'%(CompileAsManaged)' == 'true'" >%(AdditionalOptions) /Brepro</AdditionalOptions>
         </ClCompile>
         <Link Condition="$(_USEBREPRO) == '1'">
@@ -78,7 +78,7 @@
       <ForceRebuild>true</ForceRebuild>
   </PropertyGroup>
    <!--These targets are to record compile and linke time seperately-->
-  <Target Condition="$(_USECCACHE) != '' or $(_STATLOG) != ''" Name="__Start" BeforeTargets="_PrepareForBuild;BeforeBuild;_PrepareForRebuild;PrepareForBuild">
+  <Target Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != ''" Name="__Start" BeforeTargets="_PrepareForBuild;BeforeBuild;_PrepareForRebuild;PrepareForBuild">
     <TimerTask Project="$(MSBuildProjectFullPath)" Reason="Start"/>  
   </Target>
   <Target Name="__BeforeResourceCompile" BeforeTargets="BeforeResourceCompile" Condition="$(_USEBREPRO) == '1'">

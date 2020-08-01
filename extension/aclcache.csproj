@@ -7,8 +7,8 @@
     <ProjectGuid>{ADCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}</ProjectGuid>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>AcadExtension</RootNamespace>
-    <AssemblyName>AcadExtension</AssemblyName>
+    <RootNamespace>Aclcache</RootNamespace>
+    <AssemblyName>aclcache</AssemblyName>
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <TargetFrameworkProfile />
