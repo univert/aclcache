@@ -1,83 +1,81 @@
 @echo off
 
-if "%_USENOPDB%"=="" if "%_USENOPCH%"=="" if "%_USEBREPRO%"=="" if "%_USECCACHE%"=="" if "%_USEZ7%"== "" (
+if "%ACLCACHE_MODE%"=="" if "%_USENOPCH%"=="" if "%_USEBREPRO%"=="" if "%ACLCACHE_STATLOG%"=="" if "%ACLCACHE_USEZ7%"== "" if "%_USENOPDB%"== "" (
     goto :eof
 )
 
-@echo *** MSBUILD OVERRIDES to disable PDB / enable deterministic build / enable ccache[clcache]
+@echo *** MSBUILD OVERRIDES to disable PDB / enable deterministic build / enable aclcache
 
 if "%CustomBeforeMicrosoftCommonTargets%" == "" (
     set CustomBeforeMicrosoftCommonTargets=%~dp0override.targets
 )
 
-if "%_statlog%" == "" (
-   if not "%CI_RES%"=="" if exist "%CI_RES%" set _statlog=%CI_RES%\msbuild_time.csv
+if "%ACLCACHE_STATLOG%" == "" (
+   if not "%CI_RES%"=="" if exist "%CI_RES%" set ACLCACHE_STATLOG=%CI_RES%\msbuild_time.csv
 )
 
-if "%_USECCACHE%"=="" goto END
+if "%ACLCACHE_MODE%"=="" goto END
 
-@ECHO *** clcache is enabled
+@ECHO *** aclcache is enabled
 
 
-if "%CLCACHE_LOCATION%" == "" (
-    set CLCACHE_LOCATION=%~dp0bin
+if "%ACLCACHE_LOCATION%" == "" (
+    set ACLCACHE_LOCATION=%~dp0bin
 )
 
-if "%CLCACHE_PYTHON%" == "" (
-    set CLCACHE_PYTHON=%ACPACKAGEDIR%\python37
+if "%ACLCACHE_PYTHON%" == "" (
+    set ACLCACHE_PYTHON=%ACPACKAGEDIR%\python37
 )
 
-if not exist "%CLCACHE_PYTHON%\pythonw.exe" (
-    echo "***CLCACHE_PYTHON does not have python installed"
+if not exist "%ACLCACHE_PYTHON%\pythonw.exe" (
+    echo "***ACLCACHE_PYTHON does not have python installed"
     goto END
 )
 
-doskey clcache="%CLCACHE_PYTHON%\python.exe" "%CLCACHE_LOCATION%\clcache.py" $*
+doskey aclcache="%ACLCACHE_PYTHON%\python.exe" -E "%ACLCACHE_LOCATION%\aclcache.py" $*
+doskey clcache="%ACLCACHE_PYTHON%\python.exe" -E "%ACLCACHE_LOCATION%\aclcache.py" $*
 
-if "%CLCACHE_DIR%" == "" (
-    set CLCACHE_DIR=%ACTOP_BIN%\cache
+if "%ACLCACHE_DIR%" == "" (
+    set ACLCACHE_DIR=%ACTOP_BIN%\cache
 )
-if "%CLCACHE_HARDLINK%" == "" (
-    set CLCACHE_HARDLINK=1
+if "%ACLCACHE_HARDLINK%" == "" (
+    set ACLCACHE_HARDLINK=1
 )
-if not "%CLCACHE_SIZE%" == "" (
-   "%CLCACHE_PYTHON%\python.exe" "%CLCACHE_LOCATION%\clcache.py" -M %CLCACHE_SIZE%
+if not "%ACLCACHE_SIZE%" == "" (
+   "%ACLCACHE_PYTHON%\python.exe" "%ACLCACHE_LOCATION%\aclcache.py" -M %ACLCACHE_SIZE%
 )
 
-if "%CLCACHE_LOG%" == "" (
+if "%ACLCACHE_LOG%" == "" (
     if not "%CI_RES%"=="" if exist "%CI_RES%" (
-      set CLCACHE_LOG=%CI_RES%\clcache.log
-      del %CLCACHE_LOG% >nul 2>nul
+      set ACLCACHE_LOG=%CI_RES%\aclcache.log
+      del %ACLCACHE_LOG% >nul 2>nul
     )
 )
 
-if "%CLCACHE_SERVER%" == "3" (
+if "%ACLCACHE_SERVER%" == "3" (
  @echo Start clcache server
- start "clcache server" /min "%CLCACHE_PYTHON%\python.exe" "%CLCACHE_LOCATION%\clcachesrv.py"
+ start "clcache server" /min "%ACLCACHE_PYTHON%\python.exe" "%ACLCACHE_LOCATION%\aclcachesrv.py"
 )
-if "%CLCACHE_SERVER%" == "2" (
+if "%ACLCACHE_SERVER%" == "2" (
  @echo Start clcache server without watching change
- start "clcache server" /min "%CLCACHE_PYTHON%\python.exe" "%CLCACHE_LOCATION%\clcachesrv.py" --disable_watching
+ start "clcache server" /min "%ACLCACHE_PYTHON%\python.exe" "%ACLCACHE_LOCATION%\aclcachesrv.py" --disable_watching
 )
-if not "%CLCACHE_RESET%" == "" (
-   "%CLCACHE_PYTHON%\python.exe" "%CLCACHE_LOCATION%\clcache.py" --reset
+if not "%ACLCACHE_RESET%" == "" (
+   "%ACLCACHE_PYTHON%\python.exe" "%ACLCACHE_LOCATION%\aclcache.py" --reset
 )
-if not "%CLCACHE_CLEAR%" == "" (
-   "%CLCACHE_PYTHON%\python.exe" "%CLCACHE_LOCATION%\clcache.py" -C
+if not "%ACLCACHE_CLEAR%" == "" (
+   "%ACLCACHE_PYTHON%\python.exe" "%ACLCACHE_LOCATION%\aclcache.py" -C
 )
 
 :END
 @echo CustomBeforeMicrosoftCommonTargets=%CustomBeforeMicrosoftCommonTargets%
-@echo _STATLOG=%_statlog%
-@echo _USENOPDB=%_USENOPDB%
-@echo _USENOPCH=%_USENOPCH%
-@echo _USECCACHE=%_USECCACHE%
-@echo _USEBREPRO=%_USEBREPRO%
-@echo _USEZ7=%_USEZ7%
-@echo CLCACHE_LOCATION=%CLCACHE_LOCATION%
-@echo CLCACHE_HARDLINK=%CLCACHE_HARDLINK%
-@echo CLCACHE_DIR=%CLCACHE_DIR%
-@echo CLCACHE_PYTHON=%CLCACHE_PYTHON%
-@echo CLCACHE_SERVER=%CLCACHE_SERVER%
-@echo CLCACHE_SIZE=%CLCACHE_SIZE%
-@echo CLCACHE_RESET=%CLCACHE_RESET%
+@echo ACLCACHE_STATLOG=%ACLCACHE_STATLOG%
+@echo ACLCACHE_MODE=%ACLCACHE_MODE%
+@echo ACLCACHE_USEZ7=%ACLCACHE_USEZ7%
+@echo ACLCACHE_LOCATION=%ACLCACHE_LOCATION%
+@echo ACLCACHE_HARDLINK=%ACLCACHE_HARDLINK%
+@echo ACLCACHE_DIR=%ACLCACHE_DIR%
+@echo ACLCACHE_PYTHON=%ACLCACHE_PYTHON%
+@echo ACLCACHE_SERVER=%ACLCACHE_SERVER%
+@echo ACLCACHE_SIZE=%ACLCACHE_SIZE%
+@echo ACLCACHE_RESET=%ACLCACHE_RESET%

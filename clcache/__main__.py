@@ -223,7 +223,7 @@ class ManifestSection:
         except IOError:
             return None
         except ValueError:
-            printErrStr("clcache: manifest file %s was broken" % fileName)
+            printErrStr("aclcache: manifest file %s was broken" % fileName)
             return None
 
     @staticmethod
@@ -288,7 +288,7 @@ class ManifestRepository:
         # exceptions to this rule is the /MP switch, which only defines how many
         # compiler processes are running simultaneusly.  Arguments that specify
         # the compiler where to find the source files are parsed to replace
-        # ocurrences of CLCACHE_BASEDIR by a placeholder.
+        # ocurrences of ACLCACHE_BASEDIR by a placeholder.
         arguments, inputFiles = CommandLineAnalyzer.parseArgumentsAndInputFiles(commandLine)
         collapseBasedirInCmdPath = lambda path: collapseBasedirToPlaceholder(os.path.normcase(os.path.abspath(path)))
 
@@ -358,7 +358,7 @@ class CacheLock:
             if result == self.WAIT_TIMEOUT_CODE:
                 errorString = \
                     'Failed to acquire lock {} after {}ms; ' \
-                    'try setting CLCACHE_OBJECT_CACHE_TIMEOUT_MS environment variable to a larger value.'.format(
+                    'try setting ACLCACHE_OBJECT_CACHE_TIMEOUT_MS environment variable to a larger value.'.format(
                         self._mutexName, self._timeoutMs)
             else:
                 errorString = 'Error! WaitForSingleObject returns {result}, last error {error}'.format(
@@ -371,7 +371,7 @@ class CacheLock:
 
     @staticmethod
     def forPath(path):
-        timeoutMs = int(os.environ.get('CLCACHE_OBJECT_CACHE_TIMEOUT_MS', 10 * 1000))
+        timeoutMs = int(os.environ.get('ACLCACHE_OBJECT_CACHE_TIMEOUT_MS', 10 * 1000))
         lockName = path.replace(':', '-').replace('\\', '-')
         return CacheLock(lockName, timeoutMs)
 
@@ -542,9 +542,9 @@ class CacheFileStrategy:
         self.dir = cacheDirectory
         if not self.dir:
             try:
-                self.dir = os.environ["CLCACHE_DIR"]
+                self.dir = os.environ["ACLCACHE_DIR"]
             except KeyError:
-                self.dir = os.path.join(os.path.expanduser("~"), "clcache")
+                self.dir = os.path.join(os.path.expanduser("~"), "aclcache")
 
         manifestsRootDir = os.path.join(self.dir, "manifests")
         ensureDirectoryExists(manifestsRootDir)
@@ -641,7 +641,7 @@ class CacheFileStrategy:
 
 class Cache:
     def __init__(self, cacheDirectory=None):
-        memcachd = os.environ.get("CLCACHE_MEMCACHED")
+        memcachd = os.environ.get("ACLCACHE_MEMCACHED")
         if memcachd:
             from .storage import CacheMemcacheStrategy
             printTraceStatement("Use memcache:{}".format(memcachd))
@@ -713,7 +713,7 @@ class PersistentJSONDict(defaultdict):
         except IOError:
             pass
         except ValueError:
-            printErrStr("clcache: persistent json file %s was broken" % fileName)
+            printErrStr("aclcache: persistent json file %s was broken" % fileName)
 
     def _save(self):
         try:
@@ -735,7 +735,7 @@ class PersistentJSONDict(defaultdict):
 
 
 class Configuration:
-    _defaultValues = {"MaximumCacheSize": 214748364800} # 1 GiB
+    _defaultValues = {"MaximumCacheSize": 214748364800*100} # 100 GiB
 
     def __init__(self, configurationFile):
         self._configurationFile = configurationFile
@@ -1075,7 +1075,7 @@ def write_pipe(*items, read = True):
             else:
                 raise
 
-g_use_clserver = 'CLCACHE_SERVER' in os.environ
+g_use_clserver = 'ACLCACHE_SERVER' in os.environ
 def getFileHashes(filePaths):
     if g_use_clserver:
         r = write_pipe('\n'.join(filePaths).encode('utf-8'), b'\x00')
@@ -1108,17 +1108,17 @@ def getStringHash(dataString):
 
 
 def expandBasedirPlaceholder(path):
-    baseDir = normalizeBaseDir(os.environ.get('CLCACHE_BASEDIR'))
+    baseDir = normalizeBaseDir(os.environ.get('ACLCACHE_BASEDIR'))
     if path.startswith(BASEDIR_REPLACEMENT):
         if not baseDir:
-            raise LogicException('No CLCACHE_BASEDIR set, but found relative path ' + path)
+            raise LogicException('No ACLCACHE_BASEDIR set, but found relative path ' + path)
         return path.replace(BASEDIR_REPLACEMENT, baseDir, 1)
     else:
         return path
 
 
 def collapseBasedirToPlaceholder(path):
-    baseDir = normalizeBaseDir(os.environ.get('CLCACHE_BASEDIR'))
+    baseDir = normalizeBaseDir(os.environ.get('ACLCACHE_BASEDIR'))
     if baseDir is None:
         return path
     else:
@@ -1141,7 +1141,7 @@ def ensureDirectoryExists(path):
 def copyOrLink(srcFilePath, dstFilePath, writeCache=False):
     ensureDirectoryExists(os.path.dirname(os.path.abspath(dstFilePath)))
 
-    if "CLCACHE_HARDLINK" in os.environ:
+    if "ACLCACHE_HARDLINK" in os.environ:
         ret = windll.kernel32.CreateHardLinkW(str(dstFilePath), str(srcFilePath), None)
         if ret != 0:
             # Touch the time stamp of the new link so that the build system
@@ -1158,9 +1158,9 @@ def copyOrLink(srcFilePath, dstFilePath, writeCache=False):
     # lower the chances of corrupting it.
     tempDst = dstFilePath + '.tmp'
 
-    if "CLCACHE_COMPRESS" in os.environ:
-        if "CLCACHE_COMPRESSLEVEL" in os.environ:
-            compress = int(os.environ["CLCACHE_COMPRESSLEVEL"])
+    if "ACLCACHE_COMPRESS" in os.environ:
+        if "ACLCACHE_COMPRESSLEVEL" in os.environ:
+            compress = int(os.environ["ACLCACHE_COMPRESSLEVEL"])
         else:
             compress = 6
 
@@ -1181,8 +1181,8 @@ def myExecutablePath():
 
 
 def findCompilerBinary():
-    if "CLCACHE_CL" in os.environ:
-        path = os.environ["CLCACHE_CL"]
+    if "ACLCACHE_CL" in os.environ:
+        path = os.environ["ACLCACHE_CL"]
         if os.path.basename(path) == path:
             path = which(path)
 
@@ -1226,8 +1226,8 @@ def shared_append(path: str, msg: str):
         OutputDebugStringW("shared_append Failed")
     return r
 
-g_log_mem = "CLCACHE_LOG" in os.environ
-g_log_tofile = g_log_mem and not os.environ.get("CLCACHE_LOG").isdigit() and os.environ.get("CLCACHE_LOG")
+g_log_mem = "ACLCACHE_LOG" in os.environ
+g_log_tofile = g_log_mem and not os.environ.get("ACLCACHE_LOG").isdigit() and os.environ.get("ACLCACHE_LOG")
 
 g_isaty = False
 try:
@@ -1600,7 +1600,7 @@ def jobCount(cmdLine):
         return 2
 
 def printStatistics(cache, json=False):
-    if '_USECCACHE' in os.environ and '_USENOPCH' not in os.environ:
+    if 'ACLCACHE_MODE' in os.environ and '_USENOPCH' not in os.environ:
         return printStatistics2(cache, json)
     template = """
 clcache statistics:
@@ -1687,7 +1687,7 @@ def printStatistics2(cache, ifjson= False):
     jj['cache_miss'] = AllMiss
     jj['cache_hit_direct'] = stats.EntryHits
     jj['cache_directory'] = str(cache)
-    jj['cache_rebuild'] = 1 if tell_flag('CLCACHE_FORCEMISS', 1) else 0
+    jj['cache_rebuild'] = 1 if tell_flag('ACLCACHE_FORCEMISS', 1) else 0
     jj = json.dumps(jj, indent=2)
     template = f"""
     clcache statistics:
@@ -1839,9 +1839,10 @@ def start_server(close = True):
         try:
             control_server('close')
         except:pass
-    dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + r'\clcachesrv.py'
-    executable = sys.executable.replace('python.exe','pythonw.exe')
-    subprocess.Popen([executable, dir],executable=executable, creationflags=0x08000000)
+    dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + r'\aclcachesrv.py'
+    executable = os.path.join(os.environ.get('ACLCACHE_PYTHON',sys.base_exec_prefix),'pythonw.exe')
+    printTraceStatement(f'start_server: {executable} -E {dir}')
+    subprocess.Popen([executable, '-E', dir],executable=executable, creationflags=0x08000000)
 
 windll.kernel32.GetCommandLineW.restype = wintypes.LPCWSTR
 
@@ -1900,7 +1901,7 @@ def _main():
     if compiler:
         compiler = os.path.abspath(compiler).upper()
     if not compiler:
-        printTraceStatement("Failed to locate cl.exe on PATH (and CLCACHE_CL is not set), aborting.")
+        printTraceStatement("Failed to locate cl.exe on PATH (and ACLCACHE_CL is not set), aborting.")
         return 1
 
     if args.prepare:
@@ -1915,7 +1916,7 @@ def _main():
 
     printTraceStatement("Found real compiler binary at '{0!s}'".format(compiler))
 
-    if "CLCACHE_DISABLE" in os.environ:
+    if "ACLCACHE_DISABLE" in os.environ:
         return invokeRealCompiler(compiler, other_args)[0]
     try:
         return processCompileRequest(cache, compiler, other_args)
@@ -1963,7 +1964,7 @@ class CompilerEntry:
         return ManifestRepository.getIncludesContentHashForFiles(files)
 
 class hash_files_mixin:
-    file_debug = 'CLCACHE_FILEDEBUG' in os.environ
+    file_debug = 'ACLCACHE_FILEDEBUG' in os.environ
     _pending_add_buffer = []
 
     def manifest_hit(self, cache):
@@ -2002,7 +2003,9 @@ class hash_files_mixin:
         entry = self.manifest_entry()
         add_success = False
         for item in entry.output:
-            size = self.add_object(cache, item[1], item[0])
+            filename = item[0]
+            filename = filename.split('>')[-1]
+            size = self.add_object(cache, item[1], filename)
             add_success |= (size > 0)
             if not add_success: break
         if not add_success: return
@@ -2074,6 +2077,7 @@ class hash_files_mixin:
         entry = self.manifest_hit(cache)
         if not entry: return
         for file, key in entry.output:
+            file = file.split('>')[-1]
             r = self.get_object(cache, key, file, self.skip_get)
             if not r: return False
             elif self.opt_get:
@@ -2088,7 +2092,7 @@ class hash_files_mixin:
         return True
 
     def compare_hash_file(self, key, file):
-        if file.endswith('.PDB'): return
+        if file.endswith('.PDB') or file.endswith('.TLI') or file.endswith('.TLH'): return
         filename = ''.join((file, '.hash.txt'))
         try:
             with open(filename, 'rb') as f:
@@ -2185,9 +2189,9 @@ class CompilerItem(Statistics, hash_files_mixin):
         cls.platform_version = platform_version
         cls.project = project
         cls.compiler_hash = getCompilerHash(tool, *platform_version)
-        cls.skip_get = tell_flag('CLCACHE_SKIPGET', 1)
-        cls.local_cmp = cls.skip_get and tell_flag('CLCACHE_FORCEMISS', 1)
-        cls.opt_get = g_use_clserver and tell_flag('_USECCACHE', 2) and not cls.local_cmp
+        cls.skip_get = tell_flag('ACLCACHE_SKIPGET', 1)
+        cls.local_cmp = cls.skip_get and tell_flag('ACLCACHE_FORCEMISS', 1)
+        cls.opt_get = g_use_clserver and tell_flag('ACLCACHE_MODE', 2) and not cls.local_cmp
 
     def __post_init__(self):
         if self.pch_hdr:
@@ -2205,7 +2209,11 @@ class CompilerItem(Statistics, hash_files_mixin):
             self.parent = pch_dp_map[self.pch_hdr]
 
         self.dependency = sorted(dependency)
-        self.output = sorted(self.output.split('*')) if self.output else []
+        output = sorted(self.output.split('*')) if self.output else []
+        self.output = [x for x in output if '>' not in x]
+        self.tlh = [x for x in output if '>' in x]
+        if self.tlh:
+            self.tlh = list(map(lambda x:x.split('>'), self.tlh) )
         self.cmdline = cmd_normalize(self.cmdline, 'CL')
 
     def is_genPch(self):
@@ -2226,6 +2234,7 @@ class CompilerItem(Statistics, hash_files_mixin):
         hashes = getFileHashes(self.dependency)
          #safeIncludes = [collapseBasedirToPlaceholder(path) for path in sortedIncludePaths]
         output = [ list(y) for y in  zip(self.output, [getFileHash(x) for x in self.output]) ]
+        output += [ list(y) for y in  zip(["{}>{}".format(*x) for x in self.tlh], [getFileHash(x[-1]) for x in self.tlh]) ]
         self.entry = CompilerEntry(manifest_hash = self.manifest_hash(),
             file=self.full_path, cmdline=self.cmdline,
                               output=output, dependency=self.dependency,
@@ -2253,7 +2262,7 @@ class LinkerItem(Statistics, hash_files_mixin):
         cls.project = project
         cls.tool_hash = getCompilerHash(tool, *platform_version)
         cls.toolname = os.path.basename(tool).split('.')[0].title()
-        cls.skip_get = tell_flag('CLCACHE_FORCEMISS', 2) and tell_flag('CLCACHE_SKIPGET', 2)
+        cls.skip_get = tell_flag('ACLCACHE_FORCEMISS', 2) and tell_flag('ACLCACHE_SKIPGET', 2)
         cls.local_cmp = cls.skip_get
         LinkerEntry.opt_get = cls.opt_get = g_use_clserver and not cls.local_cmp
 
@@ -2314,7 +2323,7 @@ def processPreInvoke(cache, args, compiler):
     printTraceStatement("PreInvoke {}".format(windll.kernel32.GetCommandLineW()))
     with cache.statistics.lock, cache.statistics as stats:
         stats.incPreInvokeLauchCount()
-    skip_pre = tell_flag('CLCACHE_FORCEMISS', 1)
+    skip_pre = tell_flag('ACLCACHE_FORCEMISS', 1)
     content = parse_input(args)
     miss = set()
     for item in content:
@@ -2383,7 +2392,7 @@ def processPreLink(cache, args, compiler):
     with cache.statistics.lock, cache.statistics as stats:
         p = getattr(stats,'incPreInvokeLauchCount'+ os.path.basename(compiler).split('.')[0].title())
         callable(p) and p()
-    skip_pre = tell_flag('CLCACHE_FORCEMISS', 2)
+    skip_pre = tell_flag('ACLCACHE_FORCEMISS', 2)
     item = parse_input(args, LinkerItem)[0]
     hit = item.manifest_hit(cache)
     hit or item.retrieve_pendings(cache)
@@ -2660,7 +2669,7 @@ def processSingleSource(compiler, cmdLine, sourceFile, objectFile, environment):
         assert objectFile is not None
         cache = Cache()
 
-        if 'CLCACHE_NODIRECT' in os.environ:
+        if 'ACLCACHE_NODIRECT' in os.environ:
             return processNoDirect(cache, objectFile, compiler, cmdLine, environment)
         else:
             return processDirect(cache, objectFile, compiler, cmdLine, sourceFile)
@@ -2762,7 +2771,7 @@ def ensureArtifactsExist(cache, cachekey, reason, objectFile, compilerResult, ex
 
 
 def main():
-    if 'CLCACHE_PROFILE' in os.environ:
+    if 'ACLCACHE_PROFILE' in os.environ:
         import cProfile
         INVOCATION_HASH = getStringHash(','.join(sys.argv))
         cProfile.runctx('_main()', globals(), locals(), filename='clcache-{}.prof'.format(INVOCATION_HASH))
