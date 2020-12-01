@@ -1,6 +1,6 @@
 @echo off
 
-if "%ACLCACHE_MODE%"=="" if "%_USENOPCH%"=="" if "%_USEBREPRO%"=="" if "%ACLCACHE_STATLOG%"=="" if "%ACLCACHE_USEZ7%"== "" if "%_USENOPDB%"== "" (
+if "%ACLCACHE_MODE%"=="" if "%_USENOPCH%"=="" if "%_USEBREPRO%"=="" if "%ACLCACHE_STATLOG%"=="" if "%ACLCACHE_USEZ7%"== "" if "%_USENOPDB%"== "" if "%_REMOVEPCH%" == "" (
     goto :eof
 )
 
