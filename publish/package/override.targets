@@ -79,7 +79,7 @@
   </PropertyGroup>
    <!--These targets are to record compile and linke time seperately-->
   <Target Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != ''" Name="__Start" BeforeTargets="_PrepareForBuild;BeforeBuild;_PrepareForRebuild;PrepareForBuild">
-    <TimerTask Project="$(MSBuildProjectFullPath)" Reason="Start"/>  
+    <TimerTask Project="$(MSBuildProjectFullPath)" Reason="Start"/>
   </Target>
   <Target Name="__BeforeResourceCompile" BeforeTargets="BeforeResourceCompile" Condition="$(_USEBREPRO) == '1'">
       <ItemGroup>
@@ -109,7 +109,7 @@
         </ClCompile>
      </ItemGroup>
   </Target>
-  <Target Name="__Remove_pch" BeforeTargets="ClCompile" DependsOnTargets="" Condition="$(_USENOPCH) == '1'">
+  <Target Name="__Disable_pch" BeforeTargets="ClCompile" DependsOnTargets="" Condition="$(_USENOPCH) == '1'">
     <ItemGroup>
       <ClCompile>
         <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -117,5 +117,12 @@
         <PrecompiledHeaderOutputFile></PrecompiledHeaderOutputFile>
       </ClCompile>
     </ItemGroup>
+  </Target>
+  <Target Name="__Remove_pch" AfterTargets="Link;Lib" DependsOnTargets="" Condition="$(_REMOVEPCH) == '1'">
+    <PropertyGroup>
+      <PchName>$([System.IO.Path]::GetFileNameWithoutExtension($(PrecompiledHeaderFile)))</PchName>
+    </PropertyGroup>
+    <Delete Files="$(IntDir)$(PchName).pch" Condition="'$(PchName)' != ''"/>
+    <Delete Files="$(IntDir)$(ProjectName).pch" Condition="'$(ProjectName)' != ''"/>
   </Target>
 </Project>
