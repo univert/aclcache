@@ -1,8 +1,7 @@
-# API Backwards compatibility
+__version__ = '3.1.1'
 
 from pymemcache.client.base import Client  # noqa
 from pymemcache.client.base import PooledClient  # noqa
-from pymemcache.client.hash import HashClient  # noqa
 
 from pymemcache.exceptions import MemcacheError  # noqa
 from pymemcache.exceptions import MemcacheClientError  # noqa

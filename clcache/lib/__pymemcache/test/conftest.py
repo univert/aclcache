@@ -1,4 +1,3 @@
-import os.path
 import pytest
 import socket
 import ssl
@@ -70,7 +69,7 @@ def pairs(size, keys):
 @pytest.fixture(scope='session')
 def tls_context():
     return ssl.create_default_context(
-        cafile=os.path.join(os.path.dirname(__file__), "certs/ca-root.crt")
+        cafile="extras/tls/ca-root.crt"
     )
 
 

@@ -37,6 +37,7 @@ VALID_STORE_RESULTS = {
     b'prepend': (b'STORED', b'NOT_STORED'),
     b'cas':     (b'STORED', b'EXISTS', b'NOT_FOUND'),
 }
+VALID_STRING_TYPES = (six.text_type, six.string_types)
 
 
 # Some of the values returned by the "stats" command
@@ -86,9 +87,9 @@ def check_key_helper(key, allow_unicode_keys, key_prefix=b''):
     if allow_unicode_keys:
         if isinstance(key, six.text_type):
             key = key.encode('utf8')
-    elif isinstance(key, six.string_types):
+    elif isinstance(key, VALID_STRING_TYPES):
         try:
-            if isinstance(key, six.binary_type):
+            if isinstance(key, bytes):
                 key = key.decode().encode('ascii')
             else:
                 key = key.encode('ascii')
@@ -107,27 +108,6 @@ def check_key_helper(key, allow_unicode_keys, key_prefix=b''):
         raise MemcacheIllegalInputError("Key contains null: %r" % key)
 
     return key
-
-
-def normalize_server_spec(server):
-    if isinstance(server, tuple) or server is None:
-        return server
-    if isinstance(server, list):
-        return tuple(server)  # Assume [host, port] provided.
-    if not isinstance(server, six.string_types):
-        raise ValueError('Unknown server provided: %r' % server)
-    if server.startswith('unix:'):
-        return server[5:]
-    if server.startswith('/'):
-        return server
-    if ':' not in server or server.endswith(']'):
-        host, port = server, 11211
-    else:
-        host, port = server.rsplit(':', 1)
-        port = int(port)
-    if host.startswith('['):
-        host = host.strip('[]')
-    return (host, port)
 
 
 class Client(object):
@@ -274,7 +254,7 @@ class Client(object):
           The constructor does not make a connection to memcached. The first
           call to a method on the object will do that.
         """
-        self.server = normalize_server_spec(server)
+        self.server = server
         self.serde = serde or LegacyWrappingSerde(serializer, deserializer)
         self.connect_timeout = connect_timeout
         self.timeout = timeout
@@ -284,7 +264,7 @@ class Client(object):
         self.sock = None
         if isinstance(key_prefix, six.text_type):
             key_prefix = key_prefix.encode('ascii')
-        if not isinstance(key_prefix, six.binary_type):
+        if not isinstance(key_prefix, bytes):
             raise TypeError("key_prefix should be bytes.")
         self.key_prefix = key_prefix
         self.default_noreply = default_noreply
@@ -300,41 +280,25 @@ class Client(object):
     def _connect(self):
         self.close()
 
-        s = self.socket_module
+        if isinstance(self.server, (list, tuple)):
+            sock = self.socket_module.socket(self.socket_module.AF_INET,
+                                             self.socket_module.SOCK_STREAM)
 
-        if not isinstance(self.server, tuple):
-            sockaddr = self.server
-            sock = s.socket(s.AF_UNIX, s.SOCK_STREAM)
-
+            if self.tls_context:
+                sock = self.tls_context.wrap_socket(
+                    sock, server_hostname=self.server[0]
+                )
         else:
-            sock = None
-            error = None
-            host, port = self.server
-            info = s.getaddrinfo(host, port, s.AF_UNSPEC, s.SOCK_STREAM,
-                                 s.IPPROTO_TCP)
-            for family, socktype, proto, _, sockaddr in info:
-                try:
-                    sock = s.socket(family, socktype, proto)
-                    if self.no_delay:
-                        sock.setsockopt(s.IPPROTO_TCP, s.TCP_NODELAY, 1)
-                    if self.tls_context:
-                        context = self.tls_context
-                        sock = context.wrap_socket(sock, server_hostname=host)
-                except Exception as e:
-                    error = e
-                    if sock is not None:
-                        sock.close()
-                        sock = None
-                else:
-                    break
-
-            if error is not None:
-                raise error
-
+            sock = self.socket_module.socket(self.socket_module.AF_UNIX,
+                                             self.socket_module.SOCK_STREAM)
         try:
             sock.settimeout(self.connect_timeout)
-            sock.connect(sockaddr)
+            sock.connect(self.server)
             sock.settimeout(self.timeout)
+            if self.no_delay and sock.family == self.socket_module.AF_INET:
+                sock.setsockopt(self.socket_module.IPPROTO_TCP,
+                                self.socket_module.TCP_NODELAY, 1)
+
         except Exception:
             sock.close()
             raise
@@ -351,8 +315,6 @@ class Client(object):
                 pass
             finally:
                 self.sock = None
-
-    disconnect_all = close
 
     def set(self, key, value, expire=0, noreply=None, flags=None):
         """
@@ -674,7 +636,7 @@ class Client(object):
 
         Args:
           key: str, see class docs for details.
-          value: int, the amount by which to decrement the value.
+          value: int, the amount by which to increment the value.
           noreply: optional bool, False to wait for the reply (the default).
 
         Returns:
@@ -830,7 +792,7 @@ class Client(object):
 
     def _check_integer(self, value, name):
         """Check that a value is an integer and encode it as a binary string"""
-        if not isinstance(value, six.integer_types):
+        if not isinstance(value, six.integer_types):  # includes "long" on py2
             raise MemcacheIllegalInputError(
                 '%s must be integer, got bad value: %r' % (name, value)
             )
@@ -844,7 +806,7 @@ class Client(object):
         The value will be (re)encoded so that we can accept strings or bytes.
         """
         # convert non-binary values to binary
-        if isinstance(cas, (six.integer_types, six.string_types)):
+        if isinstance(cas, (six.integer_types, VALID_STRING_TYPES)):
             try:
                 cas = six.text_type(cas).encode(self.encoding)
             except UnicodeEncodeError:
@@ -868,7 +830,7 @@ class Client(object):
         """
         This function is abstracted from _fetch_cmd to support different ways
         of value extraction. In order to use this feature, _extract_value needs
-        to be overridden in the subclass.
+        to be overriden in the subclass.
         """
         if expect_cas:
             _, key, flags, size, cas = line.split()
@@ -1037,7 +999,7 @@ class PooledClient(object):
                      triggers a runtime error), by default this is 2147483648L
                      when not provided (or none).
       lock_generator: a callback/type that takes no arguments that will
-                      be called to create a lock or semaphore that can
+                      be called to create a lock or sempahore that can
                       protect the pool from concurrent access (for example a
                       eventlet lock or semaphore could be used instead)
 
@@ -1046,9 +1008,6 @@ class PooledClient(object):
     Note: if `serde` is given, the same object will be used for *all* clients
     in the pool. Your serde object must therefore be thread-safe.
     """
-
-    #: :class:`Client` class used to create new clients
-    client_class = Client
 
     def __init__(self,
                  server,
@@ -1067,7 +1026,7 @@ class PooledClient(object):
                  allow_unicode_keys=False,
                  encoding='ascii',
                  tls_context=None):
-        self.server = normalize_server_spec(server)
+        self.server = server
         self.serde = serde or LegacyWrappingSerde(serializer, deserializer)
         self.connect_timeout = connect_timeout
         self.timeout = timeout
@@ -1078,7 +1037,7 @@ class PooledClient(object):
         self.allow_unicode_keys = allow_unicode_keys
         if isinstance(key_prefix, six.text_type):
             key_prefix = key_prefix.encode('ascii')
-        if not isinstance(key_prefix, six.binary_type):
+        if not isinstance(key_prefix, bytes):
             raise TypeError("key_prefix should be bytes.")
         self.key_prefix = key_prefix
         self.client_pool = pool.ObjectPool(
@@ -1095,25 +1054,23 @@ class PooledClient(object):
                                 key_prefix=self.key_prefix)
 
     def _create_client(self):
-        return self.client_class(
-            self.server,
-            serde=self.serde,
-            connect_timeout=self.connect_timeout,
-            timeout=self.timeout,
-            no_delay=self.no_delay,
-            # We need to know when it fails *always* so that we
-            # can remove/destroy it from the pool...
-            ignore_exc=False,
-            socket_module=self.socket_module,
-            key_prefix=self.key_prefix,
-            default_noreply=self.default_noreply,
-            allow_unicode_keys=self.allow_unicode_keys,
-            tls_context=self.tls_context)
+        client = Client(self.server,
+                        serde=self.serde,
+                        connect_timeout=self.connect_timeout,
+                        timeout=self.timeout,
+                        no_delay=self.no_delay,
+                        # We need to know when it fails *always* so that we
+                        # can remove/destroy it from the pool...
+                        ignore_exc=False,
+                        socket_module=self.socket_module,
+                        key_prefix=self.key_prefix,
+                        default_noreply=self.default_noreply,
+                        allow_unicode_keys=self.allow_unicode_keys,
+                        tls_context=self.tls_context)
+        return client
 
     def close(self):
         self.client_pool.clear()
-
-    disconnect_all = close
 
     def set(self, key, value, expire=0, noreply=None, flags=None):
         with self.client_pool.get_and_release(destroy_on_fail=True) as client:
@@ -1122,8 +1079,9 @@ class PooledClient(object):
 
     def set_many(self, values, expire=0, noreply=None, flags=None):
         with self.client_pool.get_and_release(destroy_on_fail=True) as client:
-            return client.set_many(values, expire=expire, noreply=noreply,
-                                   flags=flags)
+            failed = client.set_many(values, expire=expire, noreply=noreply,
+                                     flags=flags)
+            return failed
 
     set_multi = set_many
 

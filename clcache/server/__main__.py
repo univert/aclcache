@@ -9,6 +9,7 @@ import argparse
 import re
 
 import pyuv
+from ..__main__ import getObjectFileHash
 
 class HashCache:
     def __init__(self, loop, excludePatterns, disableWatching):
@@ -29,8 +30,7 @@ class HashCache:
             logging.debug("using cached hashsum %s", hashsum)
             return hashsum
 
-        with open(path, 'rb') as f:
-            hashsum = hashlib.md5(f.read()).hexdigest()
+        hashsum = getObjectFileHash(path)
 
         watchedDirectory[basename] = hashsum
         if dirname not in self._watchedDirectories and not self.isExcluded(dirname) and not self._disableWatching:
@@ -102,9 +102,7 @@ class file_buffer:
         return len(self._buffer)
 
     def get_file_hash(self, path):
-        with open(path, 'rb') as f:
-            return hashlib.md5(f.read()).hexdigest()
-
+        return getObjectFileHash(path)
 
 class Connection:
     _buffer = file_buffer()
