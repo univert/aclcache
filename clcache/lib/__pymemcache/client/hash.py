@@ -1,15 +1,9 @@
-import collections
 import socket
 import time
 import logging
 import six
 
-from pymemcache.client.base import (
-    Client,
-    PooledClient,
-    check_key_helper,
-    normalize_server_spec,
-)
+from pymemcache.client.base import Client, PooledClient, check_key_helper
 from pymemcache.client.rendezvous import RendezvousHash
 from pymemcache.exceptions import MemcacheError
 
@@ -20,8 +14,6 @@ class HashClient(object):
     """
     A client for communicating with a cluster of memcached servers
     """
-    #: :class:`Client` class used to create new clients
-    client_class = Client
 
     def __init__(
         self,
@@ -51,8 +43,7 @@ class HashClient(object):
         Constructor.
 
         Args:
-          servers: list() of tuple(hostname, port) or string containing a UNIX
-                   socket path.
+          servers: list(tuple(hostname, port))
           hasher: optional class three functions ``get_node``, ``add_node``,
                   and ``remove_node``
                   defaults to Rendezvous (HRW) hash.
@@ -107,48 +98,30 @@ class HashClient(object):
                 'lock_generator': lock_generator
             })
 
-        for server in servers:
-            self.add_server(normalize_server_spec(server))
+        for server, port in servers:
+            self.add_server(server, port)
         self.encoding = encoding
         self.tls_context = tls_context
 
-    def add_server(self, server, port=None):
-        # To maintain backward compatibility, if a port is provided, assume
-        # that server wasn't provided as a (host, port) tuple.
-        if port is not None:
-            if not isinstance(server, six.string_types):
-                raise TypeError('Server must be a string when passing port.')
-            server = (server, port)
+    def add_server(self, server, port):
+        key = '%s:%s' % (server, port)
 
-        if isinstance(server, six.string_types):
-            key = server
-        else:
-            key = '%s:%s' % server
-
-        _class = PooledClient if self.use_pooling else self.client_class
-        client = _class(server, **self.default_kwargs)
         if self.use_pooling:
-            client.client_class = self.client_class
+            client = PooledClient(
+                (server, port),
+                **self.default_kwargs
+            )
+        else:
+            client = Client((server, port), **self.default_kwargs)
 
         self.clients[key] = client
         self.hasher.add_node(key)
 
-    def remove_server(self, server, port=None):
-        # To maintain backward compatibility, if a port is provided, assume
-        # that server wasn't provided as a (host, port) tuple.
-        if port is not None:
-            if not isinstance(server, six.string_types):
-                raise TypeError('Server must be a string when passing port.')
-            server = (server, port)
-
-        if isinstance(server, six.string_types):
-            key = server
-        else:
-            key = '%s:%s' % server
-
+    def remove_server(self, server, port):
         dead_time = time.time()
-        self._failed_clients.pop(server)
-        self._dead_clients[server] = dead_time
+        self._failed_clients.pop((server, port))
+        self._dead_clients[(server, port)] = dead_time
+        key = '%s:%s' % (server, port)
         self.hasher.remove_node(key)
 
     def _retry_dead(self):
@@ -165,7 +138,7 @@ class HashClient(object):
                     'bringing server back into rotation %s',
                     server
                 )
-                self.add_server(server)
+                self.add_server(*server)
                 del self._dead_clients[server]
             self._last_dead_check_time = current_time
 
@@ -209,7 +182,7 @@ class HashClient(object):
                     # We've reached our max retry attempts, we need to mark
                     # the sever as dead
                     logger.debug('marking server as dead: %s', client.server)
-                    self.remove_server(client.server)
+                    self.remove_server(*client.server)
 
             result = func(*args, **kwargs)
             return result
@@ -263,7 +236,7 @@ class HashClient(object):
                     # We've reached our max retry attempts, we need to mark
                     # the sever as dead
                     logger.debug('marking server as dead: %s', client.server)
-                    self.remove_server(client.server)
+                    self.remove_server(*client.server)
 
             succeeded, failed, err = self._set_many(
                 client, values, *args, **kwargs
@@ -313,7 +286,7 @@ class HashClient(object):
                 'attempts': 0,
             }
             logger.debug("marking server as dead %s", server)
-            self.remove_server(server)
+            self.remove_server(*server)
         # This client has failed previously, we need to update the metadata
         # to reflect that we have attempted it again
         else:
@@ -351,12 +324,6 @@ class HashClient(object):
 
         return succeeded, failed, None
 
-    def close(self):
-        for client in self.clients.values():
-            self._safely_run_func(client, client.close, False)
-
-    disconnect_all = close
-
     def set(self, key, *args, **kwargs):
         return self._run_cmd('set', key, False, *args, **kwargs)
 
@@ -370,7 +337,7 @@ class HashClient(object):
         return self._run_cmd('decr', key, False, *args, **kwargs)
 
     def set_many(self, values, *args, **kwargs):
-        client_batches = collections.defaultdict(dict)
+        client_batches = {}
         failed = []
 
         for key, value in six.iteritems(values):
@@ -379,6 +346,9 @@ class HashClient(object):
             if client is None:
                 failed.append(key)
                 continue
+
+            if client.server not in client_batches:
+                client_batches[client.server] = {}
 
             client_batches[client.server][key] = value
 
@@ -394,14 +364,18 @@ class HashClient(object):
     set_multi = set_many
 
     def get_many(self, keys, gets=False, *args, **kwargs):
-        client_batches = collections.defaultdict(list)
+        client_batches = {}
         end = {}
 
         for key in keys:
             client = self._get_client(key)
 
             if client is None:
+                end[key] = False
                 continue
+
+            if client.server not in client_batches:
+                client_batches[client.server] = []
 
             client_batches[client.server].append(key)
 
@@ -462,9 +436,5 @@ class HashClient(object):
         return self._run_cmd('touch', key, False, *args, **kwargs)
 
     def flush_all(self):
-        for client in self.clients.values():
+        for _, client in self.clients.items():
             self._safely_run_func(client, client.flush_all, False)
-
-    def quit(self):
-        for client in self.clients.values():
-            self._safely_run_func(client, client.quit, False)

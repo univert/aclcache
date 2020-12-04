@@ -4,9 +4,9 @@ from pymemcache.client.base import Client
 from pymemcache.serde import (python_memcache_serializer,
                               python_memcache_deserializer)
 
-from .__main__ import CacheFileStrategy, getStringHash, printTraceStatement, CompilerArtifacts, \
+from .__main__ import CacheFileStrategy, Manifest, printTraceStatement, CompilerArtifacts, \
     CACHE_COMPILER_OUTPUT_STORAGE_CODEC
-
+from .memcached import memcached_client
 
 class CacheDummyLock:
     def __enter__(self):
@@ -18,10 +18,14 @@ class CacheDummyLock:
 
 class CacheMemcacheStrategy:
     def __init__(self, server, cacheDirectory=None, manifestPrefix='manifests_', objectPrefix='objects_'):
-        self.fileStrategy = CacheFileStrategy(cacheDirectory=cacheDirectory)
+        if not isinstance(cacheDirectory, str):
+            self.fileStrategy = cacheDirectory
+        else:
+            self.fileStrategy = CacheFileStrategy(cacheDirectory=cacheDirectory)
         # XX Memcache Strategy should be independent
 
         self.lock = CacheDummyLock()
+        self.localCacheKeys = {}
         self.localCache = {}
         self.localManifest = {}
         self.objectPrefix = objectPrefix
@@ -32,19 +36,13 @@ class CacheMemcacheStrategy:
     def connect(self, server):
         server = CacheMemcacheStrategy.splitHosts(server)
         assert server, "{} is not a suitable server".format(server)
-        if len(server) == 1:
-            clientClass = Client
-            server = server[0]
+        if len(server) != 1:
+            raise ValueError(f"{server} is not a suitable server")
         else:
             from pymemcache.client.hash import HashClient
             clientClass = HashClient
-        self.client = clientClass(server, ignore_exc=True,
-                                  serializer=python_memcache_serializer,
-                                  deserializer=python_memcache_deserializer,
-                                  timeout=5,
-                                  connect_timeout=5,
-                                  key_prefix=(getStringHash(self.fileStrategy.dir) + "_").encode("UTF-8")
-                                 )
+        self.client = memcached_client(server[0])
+
         # XX key_prefix ties fileStrategy cache to memcache entry
         # because tests currently the integration tests use this to start with clean cache
         # Prevents from having cache hits in when code base is in different locations
@@ -72,7 +70,7 @@ class CacheMemcacheStrategy:
         return [CacheMemcacheStrategy.splitHost(h) for h in hosts.split(',')]
 
     def __str__(self):
-        return "Remote Memcache @{} object-prefix: {}".format(self.server, self.objectPrefix)
+        return "{}  @{}:{}".format(self.fileStrategy.__str__(), *self.server())
 
     @property
     def statistics(self):
@@ -99,8 +97,13 @@ class CacheMemcacheStrategy:
         return None
 
     def hasEntry(self, key):
-        localCache = key in self.localCache and self.localCache[key] is not None
-        return localCache or self._fetchEntry(key) is not None
+        if key in self.localCacheKeys:
+            return self.localCacheKeys[key]
+        if key in self.localCache and self.localCache[key] is not None:
+            return True
+        r = self.client.exist(key)
+        self.localCacheKeys[key] = r
+        return r
 
     def getEntry(self, key):
         if key not in self.localCache:
@@ -134,26 +137,44 @@ class CacheMemcacheStrategy:
                                 artifacts.stderr.encode(CACHE_COMPILER_OUTPUT_STORAGE_CODEC)],
                               )
 
+    def getEntry2(self, key, p):
+        if key not in self.localCache:
+            self.localCache[key] = self.client.fetch_file(key)
+        if self.localCache[key] is None:
+            printTraceStatement("Failed fetch file from memcache keyed {}".format(key))
+            return None
+        data = self.localCache[key]
+        with open(p, 'wb') as f:
+            f.write(data)
+        return p
+
+    def setEntry2(self, key, value):
+        r = self.client.store_file(key, value)
+        if r is not False:
+            self.localCacheKeys[key] = True
+        return r
+
     def setManifest(self, manifestHash, manifest):
-        self._setIgnoreExc(self.manifestPrefix + manifestHash, manifest)
+        r = self.client.store(manifestHash, manifest.asdict(None).encode('utf-8') + b' ')
+        if r:
+            printTraceStatement("Writing manifest with manifestHash = {}".format(manifestHash))
+        else:
+            printTraceStatement("Failed writing manifest with manifestHash = {}".format(manifestHash))
+        return r
 
     def _setIgnoreExc(self, key, value):
-        try:
-            self.client.set(key.encode("UTF-8"), value)
-        except Exception:
-            self.client.close()
-            if self.client.ignore_exc:
-                printTraceStatement("Could not set {} in memcache {}".format(key, self.server()))
-                return None
-            raise
-        return None
+        self.client.set(key, value, noreply=False)
 
     def getManifest(self, manifestHash):
-        return self.client.get((self.manifestPrefix + manifestHash).encode("UTF-8"))
+        doc = self.client.fetch(manifestHash)
+        return Manifest.convert(doc.decode('utf-8')) if doc else None
 
     def clean(self, stats, maximumSize):
         self.fileStrategy.clean(stats,
                                 maximumSize)
+
+    def clear(self):
+        self.client.flush()
 
 
 class CacheFileWithMemcacheFallbackStrategy:

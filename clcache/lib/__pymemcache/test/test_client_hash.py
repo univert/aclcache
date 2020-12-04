@@ -5,7 +5,6 @@ from pymemcache import pool
 
 from .test_client import ClientTestMixin, MockSocket
 import unittest
-import os
 import pytest
 import mock
 import socket
@@ -40,10 +39,9 @@ class TestHashClient(ClientTestMixin, unittest.TestCase):
         return client
 
     def test_setup_client_without_pooling(self):
-        client_class = 'pymemcache.client.hash.HashClient.client_class'
-        with mock.patch(client_class) as internal_client:
+        with mock.patch('pymemcache.client.hash.Client') as internal_client:
             client = HashClient([], timeout=999, key_prefix='foo_bar_baz')
-            client.add_server(('127.0.0.1', '11211'))
+            client.add_server('127.0.0.1', '11211')
 
         assert internal_client.call_args[0][0] == ('127.0.0.1', '11211')
         kwargs = internal_client.call_args[1]
@@ -160,20 +158,6 @@ class TestHashClient(ClientTestMixin, unittest.TestCase):
         result = client.touch(b'key', 1, noreply=False)
         assert result is True
 
-    def test_close(self):
-        client = self.make_client([])
-        assert all(c.sock is not None for c in client.clients.values())
-        result = client.close()
-        assert result is None
-        assert all(c.sock is None for c in client.clients.values())
-
-    def test_quit(self):
-        client = self.make_client([])
-        assert all(c.sock is not None for c in client.clients.values())
-        result = client.quit()
-        assert result is None
-        assert all(c.sock is None for c in client.clients.values())
-
     def test_no_servers_left(self):
         from pymemcache.client.hash import HashClient
         client = HashClient(
@@ -242,7 +226,7 @@ class TestHashClient(ClientTestMixin, unittest.TestCase):
         )
 
         result = client.get_many(['foo', 'bar'])
-        assert result == {}
+        assert result == {'foo': False, 'bar': False}
 
     def test_ignore_exec_set_many(self):
         values = {
@@ -311,10 +295,10 @@ class TestHashClient(ClientTestMixin, unittest.TestCase):
         for client in hash_client.clients.values():
             assert client.encoding == encoding
 
-    @mock.patch("pymemcache.client.hash.HashClient.client_class")
+    @mock.patch("pymemcache.client.hash.Client")
     def test_dead_server_comes_back(self, client_patch):
         client = HashClient([], dead_timeout=0, retry_attempts=0)
-        client.add_server(("127.0.0.1", 11211))
+        client.add_server("127.0.0.1", 11211)
 
         test_client = client_patch.return_value
         test_client.server = ("127.0.0.1", 11211)
@@ -330,10 +314,10 @@ class TestHashClient(ClientTestMixin, unittest.TestCase):
         assert client.get(b"key") == "Some value"
         assert ("127.0.0.1", 11211) not in client._dead_clients
 
-    @mock.patch("pymemcache.client.hash.HashClient.client_class")
+    @mock.patch("pymemcache.client.hash.Client")
     def test_failed_is_retried(self, client_patch):
         client = HashClient([], retry_attempts=1, retry_timeout=0)
-        client.add_server(("127.0.0.1", 11211))
+        client.add_server("127.0.0.1", 11211)
 
         assert client_patch.call_count == 1
 
@@ -348,62 +332,5 @@ class TestHashClient(ClientTestMixin, unittest.TestCase):
         assert client.get(b"key") == "Some value"
 
         assert client_patch.call_count == 1
-
-    def test_custom_client(self):
-        class MyClient(Client):
-            pass
-
-        client = HashClient([])
-        client.client_class = MyClient
-        client.add_server(('host', 11211))
-        assert isinstance(client.clients['host:11211'], MyClient)
-
-    def test_custom_client_with_pooling(self):
-        class MyClient(Client):
-            pass
-
-        client = HashClient([], use_pooling=True)
-        client.client_class = MyClient
-        client.add_server(('host', 11211))
-        assert isinstance(client.clients['host:11211'], PooledClient)
-
-        pool = client.clients['host:11211'].client_pool
-        with pool.get_and_release(destroy_on_fail=True) as c:
-            assert isinstance(c, MyClient)
-
-    def test_mixed_inet_and_unix_sockets(self):
-        expected = {
-            '/tmp/pymemcache.{pid}'.format(pid=os.getpid()),
-            ('127.0.0.1', 11211),
-            ('::1', 11211),
-        }
-        client = HashClient([
-            '/tmp/pymemcache.{pid}'.format(pid=os.getpid()),
-            '127.0.0.1',
-            '127.0.0.1:11211',
-            '[::1]',
-            '[::1]:11211',
-            ('127.0.0.1', 11211),
-            ('::1', 11211),
-        ])
-        assert expected == {c.server for c in client.clients.values()}
-
-    def test_legacy_add_remove_server_signature(self):
-        server = ('127.0.0.1', 11211)
-        client = HashClient([])
-        assert client.clients == {}
-        client.add_server(*server)  # Unpack (host, port) tuple.
-        assert ('%s:%s' % server) in client.clients
-        client._mark_failed_server(server)
-        assert server in client._failed_clients
-        client.remove_server(*server)  # Unpack (host, port) tuple.
-        assert server in client._dead_clients
-        assert server not in client._failed_clients
-
-        # Ensure that server is a string if passing port argument:
-        with pytest.raises(TypeError):
-            client.add_server(server, server[-1])
-        with pytest.raises(TypeError):
-            client.remove_server(server, server[-1])
 
     # TODO: Test failover logic

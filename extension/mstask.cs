@@ -499,7 +499,7 @@ namespace Aclcache
 
                 this.State |= BuildState.LinkerCachePreInvoked;
 
-                var additonal = (AdditionalDependencies ?? Enumerable.Empty<string>()).Where(x => Path.IsPathRooted(x)).ToHashSet().Where(x => File.Exists(x)).Select(x => x.ToUpper()).ToArray();
+                var additonal = (AdditionalDependencies ?? Enumerable.Empty<string>()).Where(x => Path.IsPathRooted(x.Trim('"'))).ToHashSet().Where(x => File.Exists(x)).Select(x => x.ToUpper()).ToArray();
                 var sources = Sources.Select(x => x.GetMetadata("FullPath").ToUpper()).ToArray();
                 if (LinkArtifact.IsLink)
                     output = output ?? (LinkArtifact.IsDll ? Path.ChangeExtension(sources.First(x => x.ToUpper().EndsWith(".OBJ")), ".DLL") : Path.ChangeExtension(sources.First(x => x.ToUpper().EndsWith(".OBJ")), ".EXE"));
@@ -864,9 +864,9 @@ namespace Aclcache
             var lib = project.LibTime.Ticks / 10000000.0;
             var other = starttime.HasValue ? (DateTime.Now.Ticks - starttime.Value.Ticks) / 10000000.0 - compile - link - lib : 0.0;
             string r = (project.State.HasFlag(BuildState.ClCachePreInvoked)) ?
-            $"{project.Desc},{compile},{link},{lib},{other},{project.ArtifactsHits.Count},{project.CompileArtifacts.Count - project.ArtifactsHits.Count}\n"
+            $"{project.Desc},{compile},{link},{lib},{other},{project.ArtifactsHits.Count},{project.CompileArtifacts.Count - project.ArtifactsHits.Count},{starttime},{DateTime.Now}\n"
                 :
-            $"{project.Desc},{compile},{link},{lib},{other},0,0 \n";
+            $"{project.Desc},{compile},{link},{lib},{other},0,0,{starttime},{DateTime.Now} \n";
             System.Console.WriteLine(r);
             var file = ProjectProperty(engine, "ACLCACHE_STATLOG");
             if (Int32.TryParse(file, out var _)) return;

@@ -18,6 +18,11 @@ from argparse import ArgumentParser
 
 VERSION = "5.0-dev"
 
+FILE_CHUNK_SIZE = 1000 << 10
+
+ACLCACHE_MEMCCACHE_BIG_KEY = 'Z'
+
+
 def diff_time():
     creationtime = wintypes.ULARGE_INTEGER()
     exittime = wintypes.ULARGE_INTEGER()
@@ -190,6 +195,15 @@ class Manifest:
         entryIndex = next((i for i, e in enumerate(self.entries()) if e.objectHash == objectHash), 0)
         self._entries.insert(0, self._entries.pop(entryIndex))
 
+    def asdict(self, indent=None):
+        entries = [e._asdict() for e in self.entries()]
+        jsonobject = {'type': self.entries()[0].__class__.__name__, 'entries': entries}
+        return json.dumps(jsonobject, sort_keys=False, indent=indent)
+
+    @staticmethod
+    def convert(doc):
+        doc = json.loads(doc)
+        return Manifest([globals()[doc['type']](**e) for e in doc['entries']])
 
 class ManifestSection:
     def __init__(self, manifestSectionDir):
@@ -206,11 +220,8 @@ class ManifestSection:
         manifestPath = self.manifestPath(manifestHash)
         printTraceStatement("Writing manifest with manifestHash = {} to {}".format(manifestHash, manifestPath))
         ensureDirectoryExists(self.manifestSectionDir)
-        with atomic_write(manifestPath, overwrite=True) as outFile:
-            # Converting namedtuple to JSON via OrderedDict preserves key names and keys order
-            entries = [e._asdict() for e in manifest.entries()]
-            jsonobject = { 'type': manifest.entries()[0].__class__.__name__ , 'entries': entries}
-            json.dump(jsonobject, outFile, sort_keys=False, indent=2)
+        with atomic_write(manifestPath, overwrite=True,encoding='utf-8') as outFile:
+            outFile.write(manifest.asdict(2))
 
     def getManifest(self, manifestHash):
         fileName = self.manifestPath(manifestHash)
@@ -218,8 +229,7 @@ class ManifestSection:
             return None
         try:
             with open(fileName, 'rb') as inFile:
-                doc = json.load(inFile)
-                return Manifest([globals()[doc['type']](**e) for e in doc['entries']])
+                return Manifest.convert(inFile.read())
         except IOError:
             return None
         except ValueError:
@@ -609,11 +619,9 @@ class CacheFileStrategy:
     def getManifest(self, manifestHash):
         return self.manifestRepository.section(manifestHash).getManifest(manifestHash)
 
-    def clear(self, stats):
+    def clear(self):
         rmtree(self.manifestRepository._manifestsRootDir, ignore_errors=True)
         rmtree(self.compilerArtifactsRepository._compilerArtifactsRootDir, ignore_errors=True)
-        stats.setCacheSize(0)
-        stats.setNumCacheEntries(0)
 
     def clean(self, stats, maximumSize):
         currentSize = stats.currentCacheSize()
@@ -642,12 +650,14 @@ class CacheFileStrategy:
 class Cache:
     def __init__(self, cacheDirectory=None):
         memcachd = os.environ.get("ACLCACHE_MEMCACHED")
+        self.strategy = CacheFileStrategy(cacheDirectory=cacheDirectory)
+        with self.strategy.configuration as cfg:
+            m = cfg.MemcachedServer()
+            if m : memcachd = m
         if memcachd:
             from .storage import CacheMemcacheStrategy
             printTraceStatement("Use memcache:{}".format(memcachd))
-            self.strategy = CacheMemcacheStrategy(memcachd, cacheDirectory=cacheDirectory)
-        else:
-            self.strategy = CacheFileStrategy(cacheDirectory=cacheDirectory)
+            self.strategy = CacheMemcacheStrategy(memcachd, cacheDirectory=self.strategy)
 
     def __str__(self):
         return str(self.strategy)
@@ -673,7 +683,9 @@ class Cache:
         return self.strategy.clean(stats, maximumSize)
 
     def clear(self, stats):
-        return self.strategy.clear(stats)
+        stats.setCacheSize(0)
+        stats.setNumCacheEntries(0)
+        return self.strategy.clear()
 
     @contextlib.contextmanager
     def lockFor(self, key):
@@ -735,7 +747,7 @@ class PersistentJSONDict(defaultdict):
 
 
 class Configuration:
-    _defaultValues = {"MaximumCacheSize": 214748364800*100} # 100 GiB
+    _defaultValues = {"MaximumCacheSize": 214748364800*100, "MemcachedServer": ''} # 100 GiB
 
     def __init__(self, configurationFile):
         self._configurationFile = configurationFile
@@ -757,6 +769,13 @@ class Configuration:
 
     def setMaximumCacheSize(self, size):
         self._cfg["MaximumCacheSize"] = size
+
+    def MemcachedServer(self):
+        return self._cfg['MemcachedServer']
+
+    def setMemcachedServer(self, v):
+        self._cfg['MemcachedServer'] = v
+
 
 
 class StatisticsMixin:
@@ -1088,6 +1107,20 @@ def control_server(*code, read = False):
     if read:
         return r[:-1].decode('utf-8')
 
+
+def getObjectFileHash(filePath):
+    if isinstance(filePath, str):
+        with open(filePath, 'rb') as inFile:
+            buf = inFile.read()
+    else:
+        buf = filePath
+    if len(buf) < FILE_CHUNK_SIZE:
+        return HashAlgorithm(buf).hexdigest()
+    else:
+        return HashAlgorithm(buf).hexdigest() + ACLCACHE_MEMCCACHE_BIG_KEY
+
+def is_big_file(key):
+    return key.endswith(ACLCACHE_MEMCCACHE_BIG_KEY)
 
 def getFileHash(filePath, additionalData=None):
     hasher = HashAlgorithm()
@@ -1841,8 +1874,8 @@ def start_server(close = True):
         except:pass
     dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + r'\aclcachesrv.py'
     executable = os.path.join(os.environ.get('ACLCACHE_PYTHON',sys.base_exec_prefix),'pythonw.exe')
-    printTraceStatement(f'start_server: {executable} -E {dir}')
-    subprocess.Popen([executable, '-E', dir],executable=executable, creationflags=0x08000000)
+    printTraceStatement(f'start_server: {executable} -E {dir} --disable_watching')
+    subprocess.Popen([executable, '-E', dir,'--disable_watching'],executable=executable, creationflags=0x08000000)
 
 windll.kernel32.GetCommandLineW.restype = wintypes.LPCWSTR
 
@@ -1860,6 +1893,7 @@ def _main():
     parser.add_argument('-C', '--clear', dest='clear', action='store_true', help='Cache cleared')
     parser.add_argument('-z', '--reset', dest='reset', action='store_true', help='reset cache statistics')
     parser.add_argument('-M', '--max', dest='max_size', type=float, help='set maximum cache size (in GB)')
+    parser.add_argument('-B', '--memcached', dest='memcached', type=str, default=None, help='set memcached server')
     parser.add_argument('-b', '--compiler', dest='compiler', type=str)
     parser.add_argument('-f', '--project', dest='project', type=str)
     parser.add_argument('-p', '--prepare', action='store_true')
@@ -1894,6 +1928,9 @@ def _main():
     if args.max_size and args.max_size > 0:
         with cache.lock, cache.configuration as cfg:
             cfg.setMaximumCacheSize(int(args.max_size * 1024 * 1024 * 1024))
+    if args.memcached is not None:
+        with cache.lock, cache.configuration as cfg:
+            cfg.setMemcachedServer(args.memcached)
 
     len(other_args) or sys.exit(0)
 
@@ -1986,7 +2023,7 @@ class hash_files_mixin:
                 printTraceStatement("manifest Entry Miss: {}".format(self.full_path))
         else:
             self.incHashMiss()
-            printTraceStatement("manifest hash Miss: {}".format(self.full_path))
+            printTraceStatement("manifest hash Miss: {} {}".format(self.full_path, manifest_hash))
             self.entry = False
         return self.entry
 
@@ -2068,9 +2105,8 @@ class hash_files_mixin:
     def real_get_file(self, cache, file, key):
         r = cache.getEntry2(key, file)
         if r and self.file_debug:
-            with open(file,'rb') as f:
-                rkey = HashAlgorithm(f.read()).hexdigest()
-                assert rkey == key, f"{file} hash incorrect key:{key} correct: {rkey}"
+            rkey = getObjectFileHash(file)
+            assert rkey == key, f"{file} hash incorrect key:{key} correct: {rkey}"
         return r
 
     def retrieve_hit(self, cache):
@@ -2233,8 +2269,8 @@ class CompilerItem(Statistics, hash_files_mixin):
         assert self.output
         hashes = getFileHashes(self.dependency)
          #safeIncludes = [collapseBasedirToPlaceholder(path) for path in sortedIncludePaths]
-        output = [ list(y) for y in  zip(self.output, [getFileHash(x) for x in self.output]) ]
-        output += [ list(y) for y in  zip(["{}>{}".format(*x) for x in self.tlh], [getFileHash(x[-1]) for x in self.tlh]) ]
+        output = [ list(y) for y in  zip(self.output, [getObjectFileHash(x) for x in self.output]) ]
+        output += [ list(y) for y in  zip(["{}>{}".format(*x) for x in self.tlh], [getObjectFileHash(x[-1]) for x in self.tlh]) ]
         self.entry = CompilerEntry(manifest_hash = self.manifest_hash(),
             file=self.full_path, cmdline=self.cmdline,
                               output=output, dependency=self.dependency,
@@ -2288,7 +2324,7 @@ class LinkerItem(Statistics, hash_files_mixin):
         hashes = self.generate_dependency_hash(self.dependency)
         assert hashes
          #safeIncludes = [collapseBasedirToPlaceholder(path) for path in sortedIncludePaths]
-        output = [ list(y) for y in  zip(self.output, [getFileHash(x) for x in self.output]) ]
+        output = [ list(y) for y in  zip(self.output, [getObjectFileHash(x) for x in self.output]) ]
         self.entry = LinkerEntry(manifest_hash = self.manifest_hash(),
                                  file=self.full_path, cmdline=self.cmdline,
                                  output=output, dependency=self.dependency,
@@ -2397,6 +2433,7 @@ def processPreLink(cache, args, compiler):
     hit = item.manifest_hit(cache)
     hit or item.retrieve_pendings(cache)
     hit = hit and item.retrieve_hit(cache)
+    hit or item.retrieve_pendings(cache)
     item.add_pending_buffer()
     print(item.full_path if hit and not skip_pre else '', end='*')
 
