@@ -149,9 +149,13 @@ class CacheMemcacheStrategy:
         return p
 
     def setEntry2(self, key, value):
+        if not value:
+            printTraceStatement('File is empty keyed {}'.format(key))
         r = self.client.store_file(key, value)
-        if r is not False:
+        if r:
             self.localCacheKeys[key] = True
+        else:
+            printTraceStatement("Failed writing file to memcached keyed {}".format(key))
         return r
 
     def setManifest(self, manifestHash, manifest):

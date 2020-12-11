@@ -1,4 +1,4 @@
-@echo off
+@echo
 
 if "%ACLCACHE_MODE%"=="" if "%_USENOPCH%"=="" if "%_USEBREPRO%"=="" if "%ACLCACHE_STATLOG%"=="" if "%ACLCACHE_USEZ7%"== "" if "%_USENOPDB%"== "" if "%_REMOVEPCH%" == "" (
     goto :eof
@@ -45,15 +45,18 @@ if "%ACLCACHE_SERVER%" == "2" (
  @echo Start clcache server without watching change
  start "clcache server" /min "%ACLCACHE_PYTHON%\python.exe" "%ACLCACHE_LOCATION%\aclcachesrv.py" --disable_watching
 )
-if not "%ACLCACHE_RESET%" == "" (
-   "%ACLCACHE_PYTHON%\python.exe" "%ACLCACHE_LOCATION%\aclcache.py" --reset
-)
 if not "%ACLCACHE_CLEAR%" == "" (
    "%ACLCACHE_PYTHON%\python.exe" "%ACLCACHE_LOCATION%\aclcache.py" -C
+)
+if defined ACLCACHE_MEMCACHED_SERVER (
+   @echo Use memcached server "%ACLCACHE_MEMCACHED_SERVER%"
+   "%ACLCACHE_PYTHON%\python.exe" "%ACLCACHE_LOCATION%\aclcache.py" -B "%ACLCACHE_MEMCACHED_SERVER%"
 )
 
 :END
 @echo CustomBeforeMicrosoftCommonTargets=%CustomBeforeMicrosoftCommonTargets%
+@echo _USENOPDB=%_USENOPDB%
+@echo _REMOVEPCH=%_REMOVEPCH%
 @echo ACLCACHE_STATLOG=%ACLCACHE_STATLOG%
 @echo ACLCACHE_MODE=%ACLCACHE_MODE%
 @echo ACLCACHE_USEZ7=%ACLCACHE_USEZ7%
@@ -64,3 +67,5 @@ if not "%ACLCACHE_CLEAR%" == "" (
 @echo ACLCACHE_SERVER=%ACLCACHE_SERVER%
 @echo ACLCACHE_SIZE=%ACLCACHE_SIZE%
 @echo ACLCACHE_RESET=%ACLCACHE_RESET%
+@echo ACLCACHE_MEMCACHED_SERVER=%ACLCACHE_MEMCACHED_SERVER%
+
