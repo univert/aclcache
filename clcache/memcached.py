@@ -2,10 +2,11 @@ import sys, glob, re
 from typing import List
 from dataclasses import dataclass, asdict
 from json import dumps,loads
+import traceback
 from pymemcache.client.base import Client
 from pymemcache.serde import (python_memcache_serializer,
                               python_memcache_deserializer)
-from .__main__ import getObjectFileHash, is_big_file, FILE_CHUNK_SIZE
+from .__main__ import getObjectFileHash, is_big_file, FILE_CHUNK_SIZE, printTraceStatement
 from .__main__ import HashAlgorithm
 import zstandard
 
@@ -52,14 +53,15 @@ def retry(func):
             except:
                 i += 1
                 if i > count:
+                    printTraceStatement(traceback.format_exc())
                     break
     return mfunc
 class memcached_client(Client):
     def __init__(self, server):
-        super(memcached_client, self).__init__(server, ignore_exc=True,
+        super(memcached_client, self).__init__(server, ignore_exc=False,
                         serializer=python_memcache_serializer,
                         deserializer=python_memcache_deserializer,
-                        timeout=15,
+                        timeout=60,
                         connect_timeout=15,
                         key_prefix='', encoding='utf-8')
         self.zstd = zstandard.ZstdCompressor(level=1)
@@ -98,8 +100,7 @@ class memcached_client(Client):
     def store_file(self, key, file_name):
         data = open(file_name,'rb').read()
         if len(data) < FILE_CHUNK_SIZE:
-            self.store(key, data)
-            return len(data)
+            return self.store(key, data) and len(data)
         desc = big_file_descriptor()
         chunks = []
         keys = []
@@ -110,9 +111,9 @@ class memcached_client(Client):
         desc = desc.pack()
         keys.append(key)
         chunks.append(desc)
-        self.store_multi(keys, chunks, noreply=False)
-        return len(data)
+        return self.store_multi(keys, chunks, noreply=False) and len(data)
 
+    @retry
     def fetch_file(self, key):
         buffer = self.fetch(key)
         if not buffer: return False
@@ -193,8 +194,16 @@ def populate(folder):
     #client.store_multi(keys, files)
 
 
+def test1(*args):
+    client = memcached_client('10.41.90.115:8080')
+    r = client.fetch('47a85552ac4d48aec4a0a02ab538bce7')
+    print(r)
+    #r = client.fetch_file('b70d4d9bd1fb316aca1ded8a6f31a7c5Z')
+
+    '''91d7b08e677cb563f58b53c87d98a49cZ'''
+
 def main():
-    return populate(sys.argv[2])
+    return test1(sys.argv[2])
 
 
 if __name__ == '__main__':

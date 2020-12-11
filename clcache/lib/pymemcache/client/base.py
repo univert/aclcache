@@ -967,8 +967,11 @@ class Client(object):
         if self.sock is None:
             self._connect()
 
+        buf = b''.join(cmds)
+        if len(buf) % 1024 == 0:
+            buf += b'\r\n'
         try:
-            self.sock.sendall(b''.join(cmds))
+            self.sock.sendall(buf)
             if noreply:
                 return {k: True for k in keys}
 

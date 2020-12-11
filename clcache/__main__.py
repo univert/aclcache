@@ -1905,6 +1905,8 @@ def _main():
     parser.add_argument('-S', '--start_svr', action='store_true')
     parser.add_argument('--show_svr', action='store_true')
     parser.add_argument('--show_svr2', action='store_true')
+    parser.add_argument('--manifest', type=str)
+    parser.add_argument('--key', nargs=2,  metavar=('thekey', 'filename'),)
 
     args, other_args = parser.parse_known_args()
 
@@ -1924,7 +1926,10 @@ def _main():
         print(control_server('count',read=True))
     if args.show_svr2:
         print(control_server('count2',read=True))
-
+    if args.manifest:
+        print(cache.getManifest(args.manifest).asdict(2))
+    if args.key:
+        f = cache.getEntry2(args.key[0], args.key[1])
     if args.max_size and args.max_size > 0:
         with cache.lock, cache.configuration as cfg:
             cfg.setMaximumCacheSize(int(args.max_size * 1024 * 1024 * 1024))
@@ -2097,7 +2102,11 @@ class hash_files_mixin:
                     else:
                         return True
                 printTraceStatement("Get file keyed {} to {}".format(key, file))
-                return self.real_get_file(cache, file, key)
+                r = self.real_get_file(cache, file, key)
+                if not r:
+                    printTraceStatement("Failed to get file keyed [error] {} to {}".format(key, file))
+                    self.incFailureGetObj()
+                return r
             else:
                 printTraceStatement("Failed to get file keyed {} to {}".format(key, file))
                 self.incFailureGetObj()
@@ -2355,6 +2364,16 @@ def delete_tmp_file(path):
     if not 'MSBUILDPRESERVETOOLTEMPFILES' in os.environ:
         os.remove(path)
 
+def missing_update(item, content, miss):
+    if item.is_genPch():
+        prelen = len(miss)
+        miss.update((x for x in content if x.is_usePch() and x.pch_hdr == item.pch_hdr))
+        item.incCppRecompiledFromPchChange(len(miss) - prelen)
+    elif item.is_usePch():
+        prelen = len(miss)
+        miss.update((x for x in content if x.is_genPch() and x.pch_hdr == item.pch_hdr))
+        item.incPchRecompiledFromCppChange(len(miss) - prelen)
+
 def processPreInvoke(cache, args, compiler):
     printTraceStatement("PreInvoke {}".format(windll.kernel32.GetCommandLineW()))
     with cache.statistics.lock, cache.statistics as stats:
@@ -2366,19 +2385,14 @@ def processPreInvoke(cache, args, compiler):
         if item in miss: continue
         if not item.manifest_hit(cache):
             miss.add(item)
-            if item.is_genPch():
-                prelen = len(miss)
-                miss.update( (x for x in content if x.is_usePch() and x.pch_hdr == item.pch_hdr) )
-                item.incCppRecompiledFromPchChange(len(miss) - prelen)
-            elif item.is_usePch():
-                prelen = len(miss)
-                miss.update((x for x in content if x.is_genPch() and x.pch_hdr == item.pch_hdr))
-                item.incPchRecompiledFromCppChange(len(miss) - prelen)
+            missing_update(item, content, miss)
+
     hits = set(content) - miss
     for item in hits:
         success = item.retrieve_hit(cache)
         if not success:
             miss.add(item)
+            missing_update(item, content, miss)
     hash_files_mixin.add_pending_buffer()
     hits -= miss
     print("*".join((x.item_spec for x in ( () if skip_pre else hits))), end='*')
@@ -2431,10 +2445,11 @@ def processPreLink(cache, args, compiler):
     skip_pre = tell_flag('ACLCACHE_FORCEMISS', 2)
     item = parse_input(args, LinkerItem)[0]
     hit = item.manifest_hit(cache)
-    hit or item.retrieve_pendings(cache)
-    hit = hit and item.retrieve_hit(cache)
-    hit or item.retrieve_pendings(cache)
-    item.add_pending_buffer()
+    if hit and item.retrieve_hit(cache):
+        item.add_pending_buffer()
+    else:
+        hit = False
+        item.retrieve_pendings(cache)
     print(item.full_path if hit and not skip_pre else '', end='*')
 
     with cache.statistics.lock, cache.statistics as stats:
