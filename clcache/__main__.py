@@ -6,7 +6,7 @@
 # full text of which is available in the accompanying LICENSE file at the
 # root directory of this project.
 #
-import sys, os, re, hashlib, json, subprocess, threading, pickle, multiprocessing, gzip, errno, contextlib, concurrent.futures, codecs, functools,time
+import sys, os, re, json, subprocess, threading, pickle, multiprocessing, gzip, errno, contextlib, concurrent.futures, codecs, functools,time
 from collections import defaultdict, namedtuple
 from ctypes import windll, wintypes, create_unicode_buffer, byref
 from dataclasses import dataclass, asdict, InitVar
@@ -15,12 +15,13 @@ from tempfile import TemporaryFile
 from typing import Any, List, Tuple, Iterator
 from atomicwrites import atomic_write
 from argparse import ArgumentParser
+import xxhash
 
 VERSION = "5.0-dev"
 
 FILE_CHUNK_SIZE = 1000 << 10
 
-ACLCACHE_MEMCCACHE_BIG_KEY = 'Z'
+ACLCACHE_MEMCCACHE_BIG_KEY = 'z'
 
 
 def diff_time():
@@ -49,7 +50,7 @@ def exception_hook(exc_type, exc_value, exc_traceback):
 
 sys.excepthook = exception_hook
 
-HashAlgorithm = hashlib.md5
+HashAlgorithm = xxhash.xxh3_128
 
 OUTPUT_LOCK = threading.Lock()
 
@@ -650,14 +651,14 @@ class CacheFileStrategy:
 class Cache:
     def __init__(self, cacheDirectory=None):
         memcachd = os.environ.get("ACLCACHE_MEMCACHED")
+        compress = os.environ.get("ACLCACHE_COMPRESS")
         self.strategy = CacheFileStrategy(cacheDirectory=cacheDirectory)
         with self.strategy.configuration as cfg:
-            m = cfg.MemcachedServer()
-            if m : memcachd = m
+            memcachd = cfg.MemcachedServer() or memcachd
+            compress = cfg.Compress() or compress
         if memcachd:
             from .storage import CacheMemcacheStrategy
-            printTraceStatement("Use memcache:{}".format(memcachd))
-            self.strategy = CacheMemcacheStrategy(memcachd, cacheDirectory=self.strategy)
+            self.strategy = CacheMemcacheStrategy(memcachd, cacheDirectory=self.strategy, compress=compress)
 
     def __str__(self):
         return str(self.strategy)
@@ -747,7 +748,7 @@ class PersistentJSONDict(defaultdict):
 
 
 class Configuration:
-    _defaultValues = {"MaximumCacheSize": 214748364800*100, "MemcachedServer": ''} # 100 GiB
+    _defaultValues = {"MaximumCacheSize": 214748364800*100, "MemcachedServer": '', 'Compress': ''} # 100 GiB
 
     def __init__(self, configurationFile):
         self._configurationFile = configurationFile
@@ -776,6 +777,11 @@ class Configuration:
     def setMemcachedServer(self, v):
         self._cfg['MemcachedServer'] = v
 
+    def Compress(self):
+        return self._cfg['Compress']
+
+    def setCompress(self, v):
+        self._cfg['Compress'] = v
 
 
 class StatisticsMixin:
@@ -1114,13 +1120,7 @@ def getObjectFileHash(filePath):
             buf = inFile.read()
     else:
         buf = filePath
-    if len(buf) < FILE_CHUNK_SIZE:
-        return HashAlgorithm(buf).hexdigest()
-    else:
-        return HashAlgorithm(buf).hexdigest() + ACLCACHE_MEMCCACHE_BIG_KEY
-
-def is_big_file(key):
-    return key.endswith(ACLCACHE_MEMCCACHE_BIG_KEY)
+    return HashAlgorithm(buf).hexdigest()
 
 def getFileHash(filePath, additionalData=None):
     hasher = HashAlgorithm()
@@ -1894,6 +1894,7 @@ def _main():
     parser.add_argument('-z', '--reset', dest='reset', action='store_true', help='reset cache statistics')
     parser.add_argument('-M', '--max', dest='max_size', type=float, help='set maximum cache size (in GB)')
     parser.add_argument('-B', '--memcached', dest='memcached', type=str, default=None, help='set memcached server')
+    parser.add_argument('-R', '--compress', dest='compress', type=str, default=None, help='set compression level')
     parser.add_argument('-b', '--compiler', dest='compiler', type=str)
     parser.add_argument('-f', '--project', dest='project', type=str)
     parser.add_argument('-p', '--prepare', action='store_true')
@@ -1936,6 +1937,9 @@ def _main():
     if args.memcached is not None:
         with cache.lock, cache.configuration as cfg:
             cfg.setMemcachedServer(args.memcached)
+    if args.compress is not None:
+        with cache.lock, cache.configuration as cfg:
+            cfg.setCompress(args.compress)
 
     len(other_args) or sys.exit(0)
 

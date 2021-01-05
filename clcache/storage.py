@@ -17,21 +17,36 @@ class CacheDummyLock:
 
 
 class CacheMemcacheStrategy:
-    def __init__(self, server, cacheDirectory=None, manifestPrefix='manifests_', objectPrefix='objects_'):
+    def __init__(self, server, cacheDirectory=None, manifestPrefix='manifests_', objectPrefix='objects_', compress=None):
         if not isinstance(cacheDirectory, str):
             self.fileStrategy = cacheDirectory
         else:
             self.fileStrategy = CacheFileStrategy(cacheDirectory=cacheDirectory)
         # XX Memcache Strategy should be independent
 
+        self.compress = self.compressor = None
+        if compress:
+            self.process_compress(compress)
         self.lock = CacheDummyLock()
         self.localCacheKeys = {}
         self.localCache = {}
         self.localManifest = {}
         self.objectPrefix = objectPrefix
         self.manifestPrefix = manifestPrefix
-
         self.connect(server)
+        printTraceStatement(f"Use {self}")
+
+    def process_compress(self, compress):
+        compress = compress.lower()
+        if compress.startswith('zstd'):
+            from zstandard import ZstdCompressor, ZstdDecompressor
+            compress_level = int(compress[4]) if compress[4:] else 1
+            self.compress = compress
+            self.compress_level = compress_level
+            self.compressor = (ZstdCompressor(level=compress_level), ZstdDecompressor())
+
+    def storage_key(self, key):
+        return key + 'y' if self.compress else key
 
     def connect(self, server):
         server = CacheMemcacheStrategy.splitHosts(server)
@@ -41,7 +56,7 @@ class CacheMemcacheStrategy:
         else:
             from pymemcache.client.hash import HashClient
             clientClass = HashClient
-        self.client = memcached_client(server[0])
+        self.client = memcached_client(server[0], self.compressor)
 
         # XX key_prefix ties fileStrategy cache to memcache entry
         # because tests currently the integration tests use this to start with clean cache
@@ -70,7 +85,10 @@ class CacheMemcacheStrategy:
         return [CacheMemcacheStrategy.splitHost(h) for h in hosts.split(',')]
 
     def __str__(self):
-        return "{}  @{}:{}".format(self.fileStrategy.__str__(), *self.server())
+        s = "{}  @{}:{}".format(self.fileStrategy.__str__(), *self.server())
+        if self.compress:
+            s += f"[{self.compress},level:{self.compress_level}]"
+        return s
 
     @property
     def statistics(self):
@@ -97,6 +115,7 @@ class CacheMemcacheStrategy:
         return None
 
     def hasEntry(self, key):
+        key = self.storage_key(key)
         if key in self.localCacheKeys:
             return self.localCacheKeys[key]
         if key in self.localCache and self.localCache[key] is not None:
@@ -138,6 +157,7 @@ class CacheMemcacheStrategy:
                               )
 
     def getEntry2(self, key, p):
+        key = self.storage_key(key)
         if key not in self.localCache:
             self.localCache[key] = self.client.fetch_file(key)
         if self.localCache[key] is None:
@@ -149,6 +169,7 @@ class CacheMemcacheStrategy:
         return p
 
     def setEntry2(self, key, value):
+        key = self.storage_key(key)
         if not value:
             printTraceStatement('File is empty keyed {}'.format(key))
         r = self.client.store_file(key, value)
@@ -159,7 +180,11 @@ class CacheMemcacheStrategy:
         return r
 
     def setManifest(self, manifestHash, manifest):
-        r = self.client.store(manifestHash, manifest.asdict(None).encode('utf-8') + b' ')
+        manifestHash = self.storage_key(manifestHash)
+        buffer = manifest.asdict(None).encode('utf-8')
+        if self.compressor:
+            buffer = self.compressor[0].compress(buffer)
+        r = self.client.store(manifestHash, buffer)
         if r:
             printTraceStatement("Writing manifest with manifestHash = {}".format(manifestHash))
         else:
@@ -170,7 +195,10 @@ class CacheMemcacheStrategy:
         self.client.set(key, value, noreply=False)
 
     def getManifest(self, manifestHash):
+        manifestHash = self.storage_key(manifestHash)
         doc = self.client.fetch(manifestHash)
+        if doc and self.compressor:
+            doc = self.compressor[1].decompress(doc)
         return Manifest.convert(doc.decode('utf-8')) if doc else None
 
     def clean(self, stats, maximumSize):

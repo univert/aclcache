@@ -6,11 +6,11 @@ import traceback
 from pymemcache.client.base import Client
 from pymemcache.serde import (python_memcache_serializer,
                               python_memcache_deserializer)
-from .__main__ import getObjectFileHash, is_big_file, FILE_CHUNK_SIZE, printTraceStatement
+from .__main__ import getObjectFileHash, FILE_CHUNK_SIZE, printTraceStatement, ACLCACHE_MEMCCACHE_BIG_KEY
 from .__main__ import HashAlgorithm
-import zstandard
 
-zstandard.ZstdCompressor()
+
+
 
 @dataclass
 class big_file_descriptor:
@@ -57,27 +57,30 @@ def retry(func):
                     break
     return mfunc
 class memcached_client(Client):
-    def __init__(self, server):
+    def __init__(self, server, compressor=None):
         super(memcached_client, self).__init__(server, ignore_exc=False,
                         serializer=python_memcache_serializer,
                         deserializer=python_memcache_deserializer,
                         timeout=60,
                         connect_timeout=15,
                         key_prefix='', encoding='utf-8')
-        self.zstd = zstandard.ZstdCompressor(level=1)
+        self.compressor = compressor
+
     @retry
     def fetch(self, key):
         result = self.get(key)
         return result
 
     def exist(self, key):
-        if is_big_file(key):
-            buffer = self.fetch(key)
-            if buffer:
-                desc = big_file_descriptor.unpack(buffer)
-                return self.exist_multi(*desc.iter_hashes())
-        else:
-            return self.exist_multi(key)
+        if self.exist_multi(key):
+            return True
+        key += ACLCACHE_MEMCCACHE_BIG_KEY
+        buffer = self.fetch(key)
+        if buffer:
+            desc = big_file_descriptor.unpack(buffer)
+            return self.exist_multi(*desc.iter_hashes())
+        return False
+
     @retry
     def exist_multi(self, *keys):
         r = self._store_cmd(b'append', dict.fromkeys(keys,b''), 0, False)
@@ -87,20 +90,23 @@ class memcached_client(Client):
     def store(self, key, value):
         result = self._store_cmd(b'set', {key: value}, expire=0, noreply=False, flags=None)
         if not result.get(key, False):
-            raise Exception('')
+            raise Exception('Store failed for key {}'.format(key))
         return True
 
     @retry
     def store_multi(self, keys, values, noreply=False):
         result = self._store_cmd(b'set', dict(zip(keys, values)), expire=0, noreply=noreply, flags=None)
         if not all((result[x] for x in keys)):
-            raise Exception('')
+            raise Exception('store_multi failed')
         return True
 
     def store_file(self, key, file_name):
         data = open(file_name,'rb').read()
+        if self.compressor:
+            data = self.compressor[0].compress(data)
         if len(data) < FILE_CHUNK_SIZE:
             return self.store(key, data) and len(data)
+        key += ACLCACHE_MEMCCACHE_BIG_KEY
         desc = big_file_descriptor()
         chunks = []
         keys = []
@@ -116,13 +122,19 @@ class memcached_client(Client):
     @retry
     def fetch_file(self, key):
         buffer = self.fetch(key)
-        if not buffer: return False
-        if not is_big_file(key):
+        if buffer:
+            if self.compressor:
+                buffer = self.compressor[1].decompress(buffer)
             return buffer
+        buffer = self.fetch(key + ACLCACHE_MEMCCACHE_BIG_KEY)
+        if not buffer:
+            return None
         desc = big_file_descriptor.unpack(buffer)
         result = self._fetch_cmd(b'get', desc.iter_hashes(), False)
         result = b''.join((result[x] for x in desc.iter_hashes())) if result else None
         if result and len(result) == desc.size:
+            if self.compressor:
+                result = self.compressor[1].decompress(result)
             return result
         return None
 
