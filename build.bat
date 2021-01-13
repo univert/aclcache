@@ -1,5 +1,8 @@
 @echo off
 powershell  -File install_dotnet.ps1
+if defined CI_BRANCH (
+  git branch -f %CI_BRANCH% %CUR_CL% && git checkout -f %CI_BRANCH% || goto :error
+)
 FOR /F "tokens=* USEBACKQ" %%F IN (`tool\gitversion /updateassemblyinfo /showvariable NuGetVersion`) DO (
 SET version=%%F
 )
@@ -14,4 +17,3 @@ msbuild extension\aclcache.csproj /t:rebuild /p:Configuration=Release /p:Platfor
 pushd publish
 call publish.bat %version%
 popd
-start
