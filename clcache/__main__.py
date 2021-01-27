@@ -1881,7 +1881,17 @@ windll.kernel32.GetCommandLineW.restype = wintypes.LPCWSTR
 
 
 def filter_project(g_project_name: str):
-    if g_project_name and g_project_name.lower().find(r'cmakefiles\cmaketmp\cm') > 0:
+    filter_file = os.environ.get("ACLCACHE_FILTERFILE")
+    filter_list = None
+    if filter_file:
+        try:
+            with open(filter_file, 'r', encoding='utf-8') as fp:
+                filter_list = [line.strip() for line in fp.readlines()]
+        except:
+            printTraceStatement(f"Error processing {filter_file}")
+    projname = (g_project_name and g_project_name.lower()) or None
+    if projname and (projname.find(r'cmakefiles\cmaketmp\cm') > 0 or \
+            (filter_list and any((re.search(x, projname, re.IGNORECASE) for x in filter_list)))):
         printTraceStatement(f"Skip processing {g_project_name}")
         sys.exit(5)
 

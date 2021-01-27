@@ -8,6 +8,7 @@
       <ACLCACHE_STATLOG></ACLCACHE_STATLOG>
       <_USEBREPRO></_USEBREPRO>
     </PropertyGroup>
+    <Import Project="$(ACLCACHE_OVERRIDE)" Condition="'$(ACLCACHE_OVERRIDE)' != '' and Exists('$(ACLCACHE_OVERRIDE)')"/>
     <PropertyGroup Condition="$(ACLCACHE_MODE) != ''">
       <_USEBREPRO Condition="$(_USEBREPRO) == ''">1</_USEBREPRO>
       <_USENOPDB Condition="$(ACLCACHE_USEZ7) == '' and $(_USENOPDB) == ''">1</_USENOPDB>

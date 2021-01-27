@@ -184,6 +184,24 @@ will generate a file with a name similiar to `clcache-<hashsum>.prof`. You
 can aggregate these files and generate a report by running the
 [showprofilereport.py](showprofilereport.py) script.
 
+### ACLCACHE_FILTERFILE
+Set to the absolute path of a file that contains a list of vcxproj file names
+that will be skipped during cache matching. Each line of that file is a regular expression
+which matches the path of the target vcxproj file. If matched, that project
+will be skipped. 
+
+### ACLCACHE_OVERRIDE
+Set to the absolute path of a MSBuild property/target file will which
+will be included to override properties such as to disable aclcache.
+For example, the following override can disable aclcache for mix mode compilation.
+```
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+      <!--aclcache not support for mix mode compilation-->
+      <ACLCACHE_MODE Condition="'$(MixedMode)'=='true'">0</ACLCACHE_MODE>
+    </PropertyGroup>
+</Project>
+```
 Command Line Options
 --------------------
 

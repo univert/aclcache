@@ -777,6 +777,15 @@ namespace Aclcache
             var _useccache = ProjectProperty(engine, "ACLCACHE_MODE");
             if (!string.IsNullOrEmpty(_useccache) && Int32.TryParse(_useccache, out var useccache))
             {
+                if (useccache == 0)
+                {
+                    var file = ProjectProperty(engine, "ACLCACHE_LOG");
+                    var msg = $"Skip processing[ACLCACHE_MODE=0] {project.Desc}\n";
+                    if (Int32.TryParse(file, out var _))
+                        engine.LogMessageEvent(new BuildMessageEventArgs(msg, null, null, MessageImportance.Normal));
+                    else if (!string.IsNullOrEmpty(file))
+                        AppendLog(file, msg);
+                }
                 if ((useccache & 1) == 1)
                     project.Strategy |= CacheStrategy.UseCCache;
                 if ((useccache & 2) == 2)
@@ -870,22 +879,24 @@ namespace Aclcache
             System.Console.WriteLine(r);
             var file = ProjectProperty(engine, "ACLCACHE_STATLOG");
             if (Int32.TryParse(file, out var _)) return;
+            if (!string.IsNullOrEmpty(file))
+                AppendLog(file, r);
+        }
 
-            if (file != null)
+        static private void AppendLog(string file, string msg)
+        {
+            var handle = CreateFile(file, 0x00100000 | 4, 2 | 1, IntPtr.Zero, 4, 128, IntPtr.Zero);
+            if (!handle.IsInvalid)
             {
-                var handle = CreateFile(file, 0x00100000 | 4, 2 | 1, IntPtr.Zero, 4, 128, IntPtr.Zero);
-                if (!handle.IsInvalid)
+                try
                 {
-                    try
-                    {
-                        var data = Encoding.UTF8.GetBytes(r);
-                        WriteFile(handle, data, data.Length, out var written, IntPtr.Zero);
-                    }
-                    finally
-                    {
-                        handle.Close();
+                    var data = Encoding.UTF8.GetBytes(msg);
+                    WriteFile(handle, data, data.Length, out var written, IntPtr.Zero);
+                }
+                finally
+                {
+                    handle.Close();
 
-                    }
                 }
             }
         }
