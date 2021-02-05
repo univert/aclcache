@@ -51,6 +51,7 @@ def exception_hook(exc_type, exc_value, exc_traceback):
 sys.excepthook = exception_hook
 
 HashAlgorithm = xxhash.xxh3_128
+HashAlgorithmName = xxhash.__name__
 
 OUTPUT_LOCK = threading.Lock()
 
@@ -2107,11 +2108,11 @@ class hash_files_mixin:
         return size
 
     def get_object(self, cache : Cache, key, file, skip = False):
-        DeleteFileW(file)
         with cache.lockFor(key):
             if cache.hasEntry(key):
                 if skip:
                     if self.local_cmp or not self.opt_get:
+                        DeleteFileW(file)
                         return self.get_hash_file(key, file)
                     else:
                         return True
@@ -2126,10 +2127,18 @@ class hash_files_mixin:
                 self.incFailureGetObj()
 
     def real_get_file(self, cache, file, key):
+        try:
+            if self.read_hash_metadata(file) == key.encode('utf-8') and os.stat(file).st_size > 0:
+                printTraceStatement(f"{file} with {key} already exists.")
+                return True
+        except:pass
+        DeleteFileW(file)
         r = cache.getEntry2(key, file)
-        if r and self.file_debug:
-            rkey = getObjectFileHash(file)
-            assert rkey == key, f"{file} hash incorrect key:{key} correct: {rkey}"
+        if r:
+            self.write_hash_metadata(file, key)
+            if self.file_debug:
+                rkey = getObjectFileHash(file)
+                assert rkey == key, f"{file} hash incorrect key:{key} correct: {rkey}"
         return r
 
     def retrieve_hit(self, cache):
@@ -2170,6 +2179,22 @@ class hash_files_mixin:
             count = control_server('add_buffer_hash','\n'.join(result), read=True)
             printTraceStatement("Add {} file to buffer.".format(count))
 
+    @classmethod
+    def add_pending_buffer2(self):
+        for file, hash in self._pending_add_buffer:
+            self.write_hash_metadata(file, hash)
+        printTraceStatement("Add {} file to buffer.".format(len(self._pending_add_buffer)))
+
+    @staticmethod
+    def write_hash_metadata(file, hash):
+        with open(f'{file}:{HashAlgorithmName}', 'wb', 0) as f:
+            f.write(hash.encode('utf-8'))
+
+    @staticmethod
+    def read_hash_metadata(file):
+        with open(f'{file}:{HashAlgorithmName}', 'rb') as f:
+            return f.read()
+
     def get_from_server(self, files: List[str], missing: List = []):
         items = control_server('get_buffer_hash', '\n'.join(files) , read=True).splitlines()
         if len(items) < len(files):
@@ -2182,9 +2207,37 @@ class hash_files_mixin:
                 missing.append((h, files[i]))
         return HashAlgorithm(all.encode('utf-8')).hexdigest()
 
+    def get_from_local(self, files: List[str], missing: List = []):
+        not_found = []
+        all = [None] * len(files)
+        for i, file in enumerate(files):
+            try:
+                stat = os.stat(file)
+            except:
+                raise IncludeNotFoundException
+            try:
+                hash = self.read_hash_metadata(file)
+                all[i] = hash
+                if stat.st_size == 0:
+                    missing.append((hash.decode('utf-8'), file))
+            except:
+                assert stat.st_size > 0, f"${file} has not metadata"
+                not_found.append(i)
+        try:
+            if g_use_clserver:
+                items = control_server('get_buffer_hash2', '\n'.join(map(files.__getitem__, not_found)), read=True).splitlines()
+            else:
+                items = [getFileHash(filePath) for filePath in map(files.__getitem__, not_found)]
+            assert len(items) == len(not_found)
+            list(map(all.__setitem__, not_found, (x.encode('utf-8') for x in items )))
+        except:
+            raise IncludeNotFoundException
+        return HashAlgorithm(b''.join(all)).hexdigest()
+
+
     def generate_dependency_hash(self, files: List[str], missing: List = []) -> str:
         if self.opt_get:
-            return self.get_from_server(files, missing)
+            return self.get_from_local(files, missing)
         hasher = HashAlgorithm()
         #todo
         for file in files:
@@ -2250,7 +2303,7 @@ class CompilerItem(Statistics, hash_files_mixin):
         cls.compiler_hash = getCompilerHash(tool, *platform_version)
         cls.skip_get = tell_flag('ACLCACHE_SKIPGET', 1)
         cls.local_cmp = cls.skip_get and tell_flag('ACLCACHE_FORCEMISS', 1)
-        cls.opt_get = g_use_clserver and tell_flag('ACLCACHE_MODE', 2) and not cls.local_cmp
+        cls.opt_get = tell_flag('ACLCACHE_MODE', 2) and not cls.local_cmp
 
     def __post_init__(self):
         if self.pch_hdr:
@@ -2323,7 +2376,7 @@ class LinkerItem(Statistics, hash_files_mixin):
         cls.toolname = os.path.basename(tool).split('.')[0].title()
         cls.skip_get = tell_flag('ACLCACHE_FORCEMISS', 2) and tell_flag('ACLCACHE_SKIPGET', 2)
         cls.local_cmp = cls.skip_get
-        LinkerEntry.opt_get = cls.opt_get = g_use_clserver and not cls.local_cmp
+        LinkerEntry.opt_get = cls.opt_get = not cls.local_cmp
 
 
     def __post_init__(self):
@@ -2407,7 +2460,7 @@ def processPreInvoke(cache, args, compiler):
         if not success:
             miss.add(item)
             missing_update(item, content, miss)
-    hash_files_mixin.add_pending_buffer()
+    hash_files_mixin.add_pending_buffer2()
     hits -= miss
     print("*".join((x.item_spec for x in ( () if skip_pre else hits))), end='*')
     with cache.statistics.lock, cache.statistics as stats:
@@ -2440,7 +2493,7 @@ def processPostInvoke(cache, args, compiler):
     else:
         for item in content:
             item.ensure_output(cache)
-    hash_files_mixin.add_pending_buffer()
+    hash_files_mixin.add_pending_buffer2()
 
     with cache.statistics.lock, cache.statistics as stats:
         stats.updateStats(CompilerItem)
@@ -2460,7 +2513,7 @@ def processPreLink(cache, args, compiler):
     item = parse_input(args, LinkerItem)[0]
     hit = item.manifest_hit(cache)
     if hit and item.retrieve_hit(cache):
-        item.add_pending_buffer()
+        item.add_pending_buffer2()
     else:
         hit = False
         item.retrieve_pendings(cache)
@@ -2496,7 +2549,7 @@ def processPostLink(cache, args, compiler):
         cleanCache(cache)
     else:
         content.ensure_output(cache)
-        content.add_pending_buffer()
+        content.add_pending_buffer2()
 
     with cache.statistics.lock, cache.statistics as stats:
         content.incPostInvokeExitCount()

@@ -579,6 +579,7 @@ namespace Aclcache
                 }
                 if (System.IO.File.Exists(tmpfile))
                 {
+                    BuildWorkFlow.DebugHook(6);
                     InvokeClCache($"-n \"{tmpfile}\" -b \"{PathToLinker}\" -f \"{Desc}\"", out var ret, Strategy.HasFlag(AsyncLinker));
                 }
             }

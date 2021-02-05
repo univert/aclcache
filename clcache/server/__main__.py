@@ -93,6 +93,24 @@ class file_buffer:
                 self._buffer[filename] = self._buffer[uniq] = h
                 return '|'.join((h, '1'))
 
+    def get2(self, filename):
+        h = self._buffer.get(filename)
+        if h:
+            uniq = self.uniq(filename)
+            if uniq:
+                h = self._buffer.get(uniq)
+                if h: return h
+                else:
+                    h = self.get_file_hash(filename)
+                    self._buffer[filename] = self._buffer[uniq] = h
+                    return h
+        else:
+            uniq = self.uniq(filename)
+            if uniq:
+                h = self.get_file_hash(filename)
+                self._buffer[filename] = self._buffer[uniq] = h
+                return h
+
     def add(self, filename, hash):
         self._buffer[filename] = hash
         u = self.uniq(filename)
@@ -147,6 +165,15 @@ class Connection:
 
         response = '\n'.join(result).encode('utf-8')
         pipe.write(response + b'\x00', self._onWriteDone)
+
+    def get_buffer_hash2(self, pipe, data):
+        result = []
+        for file in data:
+            r = self._buffer.get2(file)
+            if r: result.append(r)
+        response = '\n'.join(result).encode('utf-8')
+        pipe.write(response + b'\x00', self._onWriteDone)
+
 
     def add_buffer_hash(self, pipe, data):
         for item in data:
