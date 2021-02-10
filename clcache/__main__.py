@@ -651,12 +651,15 @@ class CacheFileStrategy:
 
 class Cache:
     def __init__(self, cacheDirectory=None):
+        global g_use_clserver
         memcachd = os.environ.get("ACLCACHE_MEMCACHED")
         compress = os.environ.get("ACLCACHE_COMPRESS")
         self.strategy = CacheFileStrategy(cacheDirectory=cacheDirectory)
         with self.strategy.configuration as cfg:
             memcachd = cfg.MemcachedServer() or memcachd
             compress = cfg.Compress() or compress
+            if cfg.HashServer():
+                g_use_clserver = True
         if memcachd:
             from .storage import CacheMemcacheStrategy
             self.strategy = CacheMemcacheStrategy(memcachd, cacheDirectory=self.strategy, compress=compress)
@@ -749,7 +752,7 @@ class PersistentJSONDict(defaultdict):
 
 
 class Configuration:
-    _defaultValues = {"MaximumCacheSize": 214748364800*100, "MemcachedServer": '', 'Compress': ''} # 100 GiB
+    _defaultValues = {"MaximumCacheSize": 214748364800*100, "MemcachedServer": '', 'Compress': '', 'HashServer': ''} # 100 GiB
 
     def __init__(self, configurationFile):
         self._configurationFile = configurationFile
@@ -783,6 +786,12 @@ class Configuration:
 
     def setCompress(self, v):
         self._cfg['Compress'] = v
+
+    def setUseHashServer(self, v):
+        self._cfg['HashServer'] = v
+
+    def HashServer(self):
+        return self._cfg['HashServer']
 
 
 class StatisticsMixin:
@@ -1919,6 +1928,7 @@ def _main():
     parser.add_argument('--show_svr2', action='store_true')
     parser.add_argument('--manifest', type=str)
     parser.add_argument('--key', nargs=2,  metavar=('thekey', 'filename'),)
+    parser.add_argument('-Q', '--hashserver', dest='hashserver', type=int, default=None, help='to use hash server')
 
     args, other_args = parser.parse_known_args()
 
@@ -1951,6 +1961,10 @@ def _main():
     if args.compress is not None:
         with cache.lock, cache.configuration as cfg:
             cfg.setCompress(args.compress)
+    if args.hashserver is not None:
+        with cache.lock, cache.configuration as cfg:
+            cfg.setUseHashServer(args.hashserver)
+
 
     len(other_args) or sys.exit(0)
 
@@ -2146,7 +2160,7 @@ class hash_files_mixin:
         if not entry: return
         for file, key in entry.output:
             file = file.split('>')[-1]
-            r = self.get_object(cache, key, file, self.skip_get)
+            r = self.get_object(cache, key, file,  False if file[-4:] in ('.TLH', '.TLI') else self.skip_get )
             if not r: return False
             elif self.opt_get:
                 self._pending_add_buffer.append((file, key))
@@ -2280,7 +2294,7 @@ def cmd_normalize(cmdline, eev):
     return re.subn('\s{2,}/', ' /', cmdline.strip())[0]
 
 pch_dp_map = dict()
-
+tlb_output = set()
 
 def tell_flag(env:str, flag: int):
     return int(os.environ.get(env, '0')) & flag == flag
@@ -2314,6 +2328,9 @@ class CompilerItem(Statistics, hash_files_mixin):
         else:
             dependency = set(dependency)
 
+        if tlb_output:
+            dependency = dependency - tlb_output
+
         if self.is_genPch():
             assert self.pch_hdr not in pch_dp_map
             pch_dp_map[self.pch_hdr] = self
@@ -2326,6 +2343,10 @@ class CompilerItem(Statistics, hash_files_mixin):
         self.tlh = [x for x in output if '>' in x]
         if self.tlh:
             self.tlh = list(map(lambda x:x.split('>'), self.tlh) )
+            for input, output in self.tlh:
+                tlb_output.add(output)
+                printTraceStatement(f'TLB output: {output}')
+
         self.cmdline = cmd_normalize(self.cmdline, 'CL')
 
     def is_genPch(self):
