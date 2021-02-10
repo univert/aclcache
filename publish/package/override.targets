@@ -61,11 +61,13 @@
         </Link>
         <!--/PROFILE use /BREPRO to produce identical outputs from same source code-->
         <ClCompile Condition="$(_USEBREPRO) == '1'">
+           <WholeProgramOptimization>false</WholeProgramOptimization>
            <AdditionalOptions Condition="'%(CompileAsManaged)' != 'true'" >%(AdditionalOptions) /experimental:deterministic</AdditionalOptions>
            <AdditionalOptions Condition="'%(CompileAsManaged)' != 'true' and '$(ACLCACHE_FORCEBREPRO)' == ''" >%(AdditionalOptions) /wd5048</AdditionalOptions>
            <AdditionalOptions Condition="'%(CompileAsManaged)' == 'true'" >%(AdditionalOptions) /Brepro</AdditionalOptions>
         </ClCompile>
         <Link Condition="$(_USEBREPRO) == '1'">
+          <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
           <AdditionalOptions>%(AdditionalOptions) /experimental:deterministic</AdditionalOptions>
         </Link>
         <Lib Condition="$(_USEBREPRO) == '1'">
