@@ -10,7 +10,7 @@ if "%CustomBeforeMicrosoftCommonTargets%" == "" (
     set CustomBeforeMicrosoftCommonTargets=%~dp0override.targets
 )
 
-if "%ACLCACHE_MODE%"=="" goto END
+if "%ACLCACHE_MODE%"=="" if "%_USEBREPRO%"== "" goto END
 
 @ECHO *** aclcache is enabled
 
@@ -27,6 +27,9 @@ if not exist "%ACLCACHE_PYTHON%\pythonw.exe" (
     echo "***ACLCACHE_PYTHON does not have python installed"
     goto END
 )
+
+if "%ACLCACHE_MODE%"=="" goto END
+
 
 doskey aclcache="%ACLCACHE_PYTHON%\python.exe" -E "%ACLCACHE_LOCATION%\aclcache.py" $*
 doskey clcache="%ACLCACHE_PYTHON%\python.exe" -E "%ACLCACHE_LOCATION%\aclcache.py" $*

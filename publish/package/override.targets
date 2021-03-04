@@ -18,7 +18,7 @@
     <UsingTask Condition="$(_USEBREPRO) != ''" TaskName="RegexFileUpdate" AssemblyFile="$(AclcacheFilePath)"/>
     <UsingTask Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != ''" TaskName="CL" AssemblyFile="$(AclcacheFilePath)"/>
     <UsingTask Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != ''" TaskName="LIB" AssemblyFile="$(AclcacheFilePath)"/>
-    <UsingTask Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != ''" TaskName="Link" AssemblyFile="$(AclcacheFilePath)"/>
+    <UsingTask Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != '' or $(_USEBREPRO) != ''" TaskName="Link" AssemblyFile="$(AclcacheFilePath)"/>
     <ItemDefinitionGroup Condition="$(_USENOPCH) == '1'">
       <ClCompile>
         <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -55,6 +55,7 @@
         <Link  Condition="$(_USENOPDB) == '1'">
           <OptimizeReferences Condition="$(MixedMode) != 'true' and '$(Configuration)'=='Debug'">false</OptimizeReferences>
           <Profile>false</Profile>
+          <AdditionalOptions>%(AdditionalOptions) /nocoffgrpinfo</AdditionalOptions>
           <GenerateDebugInformation>No</GenerateDebugInformation>
           <ProgramDatabaseFile></ProgramDatabaseFile>
           <StripPrivateSymbols></StripPrivateSymbols>
@@ -127,5 +128,12 @@
     </PropertyGroup>
     <Delete Files="$(IntDir)$(PchName).pch" Condition="'$(PchName)' != ''"/>
     <Delete Files="$(IntDir)$(ProjectName).pch" Condition="'$(ProjectName)' != ''"/>
+  </Target>
+  <Target Name="__AclcacheAssemblyPatcher" AfterTargets="InternalRipReferenceAssembly" Condition="'$(ACLCACHE_PATCHASSEMBLY)' != '' and '$(LinkSkippedExecution)' != 'true' and '$(PRODNAME)'=='acad' And '$(RippedRef)'=='true' And $(CopyToAssemblyRef) != 'false' and $(_USEBREPRO) == '1' and Exists('$(ASSEMBLYREF)\$(TargetFileName)')">
+     <Message Text="Patching reference assembly &quot;$(AssemblyRef)\$(TargetFileName)&quot;"/>
+     <Exec Command="$(ACLCACHE_PYTHON)\python.exe -E $(ACLCACHE_LOCATION)\patcher.py &quot;$(AssemblyRef)\$(TargetFileName)&quot;"/>
+  </Target>
+  <Target Name="__AclcacheAssemblyPatcher2" AfterTargets="RipToOutputDirectory_ReferenceAssembly" Condition="'$(ACLCACHE_PATCHASSEMBLY)' != '' and '$(PRODNAME)'=='acad' And '$(RippedRef)'=='true' and $(_USEBREPRO) == '1' and Exists('$(ASSEMBLYREF)\$(TargetFileName)')">
+     <Exec Command="$(ACLCACHE_PYTHON)\python.exe -E $(ACLCACHE_LOCATION)\patcher.py &quot;$(AssemblyRef)\$(TargetFileName)&quot;"/>
   </Target>
 </Project>

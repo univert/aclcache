@@ -1116,7 +1116,7 @@ def getFileHashes(filePaths):
         r = write_pipe('\n'.join(filePaths).encode('utf-8'), b'\x00')
         return r[:-1].decode('utf-8').splitlines()
     else:
-        return [getFileHash(filePath) for filePath in filePaths]
+        return [cachedGetFileHash(filePath) for filePath in filePaths]
 
 def control_server(*code, read = False):
     r = write_pipe('\n'.join(code).encode('utf-8'), b'\x01', read=read)
@@ -1131,6 +1131,14 @@ def getObjectFileHash(filePath):
     else:
         buf = filePath
     return HashAlgorithm(buf).hexdigest()
+
+g_file_hash_cache = {}
+def cachedGetFileHash(file):
+    h = g_file_hash_cache.get(file)
+    if h: return h
+    h = getObjectFileHash(file)
+    g_file_hash_cache[file] = h
+    return h
 
 def getFileHash(filePath, additionalData=None):
     hasher = HashAlgorithm()
@@ -2238,10 +2246,10 @@ class hash_files_mixin:
                 assert stat.st_size > 0, f"${file} has not metadata"
                 not_found.append(i)
         try:
-            if g_use_clserver:
+            if False:
                 items = control_server('get_buffer_hash2', '\n'.join(map(files.__getitem__, not_found)), read=True).splitlines()
             else:
-                items = [getFileHash(filePath) for filePath in map(files.__getitem__, not_found)]
+                items = [cachedGetFileHash(filePath) for filePath in map(files.__getitem__, not_found)]
             assert len(items) == len(not_found)
             list(map(all.__setitem__, not_found, (x.encode('utf-8') for x in items )))
         except:
@@ -2329,13 +2337,15 @@ class CompilerItem(Statistics, hash_files_mixin):
             dependency = set(dependency)
 
         if tlb_output:
-            dependency = dependency - tlb_output
+            dependency.difference_update(tlb_output)
 
         if self.is_genPch():
             assert self.pch_hdr not in pch_dp_map
             pch_dp_map[self.pch_hdr] = self
         elif self.is_usePch():
             self.parent = pch_dp_map[self.pch_hdr]
+            dependency.difference_update(self.parent.output)
+            dependency.difference_update(self.parent.dependency)
 
         self.dependency = sorted(dependency)
         output = sorted(self.output.split('*')) if self.output else []
