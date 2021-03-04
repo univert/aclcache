@@ -55,7 +55,7 @@
         <Link  Condition="$(_USENOPDB) == '1'">
           <OptimizeReferences Condition="$(MixedMode) != 'true' and '$(Configuration)'=='Debug'">false</OptimizeReferences>
           <Profile>false</Profile>
-          <AdditionalOptions>%(AdditionalOptions) /nocoffgrpinfo</AdditionalOptions>
+          <AdditionalOptions Condition="'$(PlatformToolset)' != 'ClangCl'">%(AdditionalOptions) /nocoffgrpinfo</AdditionalOptions>
           <GenerateDebugInformation>No</GenerateDebugInformation>
           <ProgramDatabaseFile></ProgramDatabaseFile>
           <StripPrivateSymbols></StripPrivateSymbols>
