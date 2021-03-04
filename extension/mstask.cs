@@ -176,6 +176,8 @@ namespace Aclcache
         UseZ7 = 16,
         AsyncCcache = 32,
         AsyncLinker = 64,
+        UseRepro = 128,
+        UsePatchAssembly = 256,
     }
     [Flags] public enum BuildState : Int32
     {
@@ -378,10 +380,10 @@ namespace Aclcache
                     }
                 }
             }
-            public int InvokeClCache(string switches, out string result, bool wait = true)
+            public int InvokeClCache(string switches, out string result, bool wait = true, string cmdline = null)
             {
                 var proc = new System.Diagnostics.Process();
-                var cmdline = $"-E \"{_clcacheLocation}\\aclcache.py\" {switches}";
+                cmdline = cmdline ?? $"-E \"{_clcacheLocation}\\aclcache.py\" {switches}";
                 proc.StartInfo = Utils.GetProcessStartInfo(_pythonLocation, cmdline, false);
 
                 int ExitCode = -1;
@@ -493,13 +495,36 @@ namespace Aclcache
                 }
             }
 
-            internal bool PreInvokeLinkerCache(IEnumerable<ITaskItem> Sources, string output, IEnumerable<string> AdditionalDependencies, TrackedVCToolTask tool)
+            private string[] CalcAdditional(IEnumerable<string> AdditionalDependencies, IEnumerable<string> AdditionalDirectries)
+            {
+                AdditionalDependencies = AdditionalDependencies ?? Enumerable.Empty<string>();
+                AdditionalDirectries = AdditionalDirectries ?? Enumerable.Empty<string>();
+                if (Environment.GetEnvironmentVariable("LIB") is string lib)
+                {
+                    AdditionalDirectries = AdditionalDirectries.Concat(lib.Split(StringArraySplitter, StringSplitOptions.RemoveEmptyEntries));
+
+                }
+                HashSet<string> result = new HashSet<string>();
+                foreach (var item in AdditionalDependencies)
+                {
+                    var x = item.Trim('"');
+                    if (Path.IsPathRooted(x) && File.Exists(x))
+                        result.Add(x.ToUpper());
+                    var path = AdditionalDirectries.Where(s => File.Exists(Path.Combine(s, x))).FirstOrDefault();
+                    if (path != null)
+                        result.Add(Path.GetFullPath(Path.Combine(path, x)).ToUpper());
+                }
+                return result.ToArray();
+            }
+
+            internal bool PreInvokeLinkerCache(IEnumerable<ITaskItem> Sources, string output, IEnumerable<string> AdditionalDependencies, IEnumerable<string> AdditionalDirectries, TrackedVCToolTask tool)
             {
                 System.Diagnostics.Debug.Assert(!State.HasFlag(BuildState.LinkerCachePreInvoked));
 
                 this.State |= BuildState.LinkerCachePreInvoked;
 
-                var additonal = (AdditionalDependencies ?? Enumerable.Empty<string>()).Where(x => Path.IsPathRooted(x.Trim('"'))).ToHashSet().Where(x => File.Exists(x)).Select(x => x.ToUpper()).ToArray();
+                var additonal = CalcAdditional(AdditionalDependencies, AdditionalDirectries);
+                additonal = FilterInput(additonal, tool, null).ToArray();
                 var sources = Sources.Select(x => x.GetMetadata("FullPath").ToUpper()).ToArray();
                 if (LinkArtifact.IsLink)
                     output = output ?? (LinkArtifact.IsDll ? Path.ChangeExtension(sources.First(x => x.ToUpper().EndsWith(".OBJ")), ".DLL") : Path.ChangeExtension(sources.First(x => x.ToUpper().EndsWith(".OBJ")), ".EXE"));
@@ -534,6 +559,26 @@ namespace Aclcache
                 return false;
             }
 
+            internal void PatchAssembly(IEnumerable<ITaskItem> Sources, string output, CanonicalTrackedInputFiles SourceDependencies, Microsoft.Build.CPPTasks.Link tool)
+            {
+                DebugHook(7);
+                if (!tool.SkippedExecution && this.Strategy.HasFlag(UseRepro) && this.Strategy.HasFlag(UsePatchAssembly))
+                {
+                    var sources = Sources.Select(x => x.GetMetadata("FullPath").ToUpper()).ToArray();
+                    Array.Sort(sources);
+
+                    var depends = FilterLinkTlogs(SourceDependencies.DependencyTable, sources);
+                    if (!depends.Any(x => x.EndsWith("MSCOREE.LIB")))
+                        return;
+
+                    if (output == null)
+                    {
+                        output = (tool.LinkDLL ? Path.ChangeExtension(sources.First(x => x.ToUpper().EndsWith(".OBJ")), ".DLL") : Path.ChangeExtension(sources.First(x => x.ToUpper().EndsWith(".OBJ")), ".EXE"));
+                    }
+                    InvokeClCache(string.Empty, out var ret, true, $"-E \"{_clcacheLocation}\\patcher.py\" {output}");
+                }
+            }
+
             internal void PostInvokeLinkerCache(CanonicalTrackedInputFiles SourceDependencies, CanonicalTrackedOutputFiles SourceOutputs, TrackedVCToolTask tool)
             {
                 if (!State.HasFlag(BuildState.LinkerCachePreInvoked)
@@ -541,7 +586,7 @@ namespace Aclcache
                     return;
                 State |= BuildState.LinkerCachePostInvoked;
 
-                var depends = FilterInput(FilterLinkTlogs(SourceDependencies.DependencyTable), tool, tool.ExcludedInputPaths.Select(x => x.ItemSpec.ToUpper()));
+                var depends = FilterInput(FilterLinkTlogs(SourceDependencies.DependencyTable), tool, null);
                 var outputs = FilterLinkTlogs(SourceOutputs.DependencyTable).ToHashSet();
                 System.Diagnostics.Debug.Assert(outputs.Contains(LinkArtifact.MainOut));
                 var inputs = new HashSet<string>(LinkArtifact.Input.Concat(LinkArtifact.AdditionalInput));
@@ -588,6 +633,8 @@ namespace Aclcache
 
             public bool IsLinkerCache => Strategy.HasFlag(UseLinkerCache);
 
+            public string[] CommonLibraryDir { get; set; } = new string[0];
+
             internal void SetCurrentEngine(IBuildEngine engine)
             {
                 CurrentEngine = engine;
@@ -605,7 +652,7 @@ namespace Aclcache
             {
                 var tool = PathToCL ?? PathToLinker ?? task.invoke<string>("ComputePathToTool").ToUpper();
                 var tooldir = Path.GetDirectoryName(tool).ToUpper();
-                return inputs.Where(x => Path.GetDirectoryName(x) is string dir && !dir.StartsWith(tooldir) && !CommonDirTest(commondir, dir)).ToHashSet();
+                return inputs.Where(x => Path.GetDirectoryName(x) is string dir && !dir.StartsWith(tooldir) && !CommonDirTest(this.CommonLibraryDir, dir)).ToHashSet();
             }
 
             private bool CommonDirTest(IEnumerable<string> commondir, string dir)
@@ -616,9 +663,9 @@ namespace Aclcache
                     return false;
             }
             
-            internal IEnumerable<string> FilterLinkTlogs<T>(Dictionary<string, Dictionary<string, T>> deptable)
+            internal IEnumerable<string> FilterLinkTlogs<T>(Dictionary<string, Dictionary<string, T>> deptable, IEnumerable<string> inputs = null)
             {
-                var inputmarker = string.Join("|", LinkArtifact.Input);
+                var inputmarker = string.Join("|", inputs ?? LinkArtifact.Input);
                 foreach (var item in deptable)
                 {
                     var marker = item.Key.Split('|');
@@ -797,6 +844,7 @@ namespace Aclcache
                     project.Strategy |= CacheStrategy.UseNoPdb;
                 if (!string.IsNullOrEmpty(ProjectProperty(engine, "ACLCACHE_USEZ7")))
                     project.Strategy |= CacheStrategy.UseZ7;
+
                 if (ProjectProperty(engine, "ACLCACHE_SYNC") is string _async && Int32.TryParse(_async, out var async_v))
                 {
                     if ((async_v & 1) == 1)
@@ -808,10 +856,20 @@ namespace Aclcache
                     project.ExcludeCommonDir = false;
                 if (project.ExcludeCommonDir)
                 {
-                    project.WindowsSDKVersion = string.Join("|", ProjectProperty(engine, "TargetPlatformVersion"), ProjectProperty(engine, "NETFXSDK_Version"));
-                    project.VCVersion = ProjectProperty(engine, "VCToolsVersion");
+                    project.WindowsSDKVersion = string.Join("|", ProjectProperty(engine, "WindowsSDKVersion") ?? ProjectProperty(engine, "TargetPlatformVersion") ?? string.Empty, ProjectProperty(engine, "NETFXKitsDir") ?? string.Empty).ToUpper();
+                    project.VCVersion = ProjectProperty(engine, "VCToolsVersion") ?? string.Empty;
+                    IEnumerable<string> commonlib = (ProjectProperty(engine, "WindowsSdkDir") ?? string.Empty).ToUpper().Split(StringArraySplitter, StringSplitOptions.RemoveEmptyEntries);
+                    commonlib = commonlib.Concat((ProjectProperty(engine, "NETFXKitsDir") ?? string.Empty).ToUpper().Split(StringArraySplitter, StringSplitOptions.RemoveEmptyEntries));;
+                    commonlib = commonlib.Concat((ProjectProperty(engine, "VCINSTALLDIR") ?? string.Empty).ToUpper().Split(StringArraySplitter, StringSplitOptions.RemoveEmptyEntries));
+                    var excludedirs = new HashSet<string>(commonlib);
+                    excludedirs.Add(@"C:\WINDOWS");
+                    project.CommonLibraryDir = excludedirs.ToArray();
                 }
             }
+            if (!string.IsNullOrEmpty(ProjectProperty(engine, "_USEBREPRO")))
+                project.Strategy |= CacheStrategy.UseRepro;
+            if (!string.IsNullOrEmpty(ProjectProperty(engine, "_USEPATCHASSEMBLY")))
+                project.Strategy |= CacheStrategy.UsePatchAssembly;
         }
         public static ProjectInfo BeginCompile(this Microsoft.Build.Framework.IBuildEngine engine)
         {
@@ -929,11 +987,13 @@ namespace Aclcache
             }
             bool r = true;
             if (this.Sources.Length > 0)
-                r = base.Execute();
-            if (r)
             {
-                PostProcess();
-                _project.State |= BuildState.CompileFinished;
+                r = base.Execute();
+                if (r)
+                {
+                    PostProcess();
+                    _project.State |= BuildState.CompileFinished;
+                }
             }
             _project.CompileSuccess &= r;
             return r;
@@ -996,11 +1056,30 @@ namespace Aclcache
                 else
                 {
                    artifact.Output.Add($"{source}>{item}");
+                   patchTLH(item);
                 }
             }
             return result;
         }
 
+        private void patchTLH(string file)
+        {
+            try
+            {
+                string[] lines = File.ReadAllLines(file);
+                for (int i = 0; i < 6; i++)
+                {
+                    if (lines[i].StartsWith(@"//"))
+                    {
+                        lines[i] = string.Empty;
+                    }
+                }
+                File.WriteAllLines(file, lines, Encoding.UTF8);
+            }
+            catch
+            {
+            }
+        }
         protected override void RemoveTaskSpecificInputs(CanonicalTrackedInputFiles compactInputs)
         {
             base.RemoveTaskSpecificInputs(compactInputs);
@@ -1060,11 +1139,15 @@ namespace Aclcache
             if (_project.IsLinkerCache)
             {
                 _project.LinkArtifact.IsDll = this.LinkDLL;
-                skip = _project.PreInvokeLinkerCache(Sources, OutputFile, AdditionalDependencies, this);
+                skip = _project.PreInvokeLinkerCache(Sources, OutputFile, AdditionalDependencies, AdditionalLibraryDirectories, this);
             }
             bool r = true;
             if (!skip)
+            {
                 r = base.Execute();
+                if (r)
+                    _project.PatchAssembly(Sources, OutputFile, SourceDependencies, this);
+            }
             _project.LinkSuccess &= r;
             if (!skip && r)
                 PostProcess();
@@ -1099,7 +1182,7 @@ namespace Aclcache
             bool skip = false;
             if (_project.IsLinkerCache)
             {
-                skip = _project.PreInvokeLinkerCache(Sources, OutputFile, AdditionalDependencies, this);
+                skip = _project.PreInvokeLinkerCache(Sources, OutputFile, AdditionalDependencies, AdditionalLibraryDirectories, this);
             }
             bool r = true;
             if (!skip)
