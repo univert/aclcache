@@ -809,6 +809,7 @@ namespace Aclcache
                         {
                             project.PostInvokeClcache();
                             LogTiming(entry, project);
+                            LogBinaryFiles(entry, project);
                             _projects.Remove(hash);
                         }
                     }
@@ -940,6 +941,19 @@ namespace Aclcache
             if (Int32.TryParse(file, out var _)) return;
             if (!string.IsNullOrEmpty(file))
                 AppendLog(file, r);
+        }
+
+        private static void LogBinaryFiles(this object engine, ProjectInfo project)
+        {
+
+            if (!string.IsNullOrEmpty(project.LinkArtifact.MainOut)) {
+                string r = $"{project.LinkArtifact.MainOut} \n";
+                var file = ProjectProperty(engine, "ACLCACHE_OUTPUT_BINARY_FILES");
+                if (Int32.TryParse(file, out var _)) return;
+                if (!string.IsNullOrEmpty(file))
+                    AppendLog(file, r);
+            }
+
         }
 
         static private void AppendLog(string file, string msg)
