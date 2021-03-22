@@ -2101,10 +2101,10 @@ class hash_files_mixin:
                 self.incDuplicateManifestEntryFound()
                 found.output = entry.output
                 cache.setManifest(manifest_hash, manifest)   #entry replaced
-                printTraceStatement("Duplicate entry found for {}".format(entry.file))
+                printTraceStatement("Duplicate entry found for {} hash:{} dependency:{}".format(entry.file, manifest_hash, entry.dependency_hash))
             else:
                 self.incIdenticalEntryCount()
-                printTraceStatement("Identical entry found for {}".format(entry.file))
+                printTraceStatement("Identical entry found for {} hash:{} dependency:{}".format(entry.file, manifest_hash, entry.dependency_hash))
         return
 
     def add_object(self, cache : Cache, key, file):
@@ -2235,6 +2235,9 @@ class hash_files_mixin:
         for i, file in enumerate(files):
             try:
                 stat = os.stat(file)
+            except OSError as err:
+                if err.errno == 22 and err.winerror == 1 and os.path.islink(file):
+                   stat = os.stat(os.readlink(file))
             except:
                 raise IncludeNotFoundException
             try:
@@ -2307,6 +2310,16 @@ tlb_output = set()
 def tell_flag(env:str, flag: int):
     return int(os.environ.get(env, '0')) & flag == flag
 
+class pch_stub():
+    def __init__(self, pch):
+        self.entry = lambda: None
+        self.entry.manifest_hash, self.entry.dependency_hash = pch.split('|')
+        self.dependency = self.output = ()
+
+    def manifest_hash(self):
+        return self.entry.manifest_hash
+
+
 @dataclass
 class CompilerItem(Statistics, hash_files_mixin):
     item_spec: str;full_path: str; pch_state: str
@@ -2343,9 +2356,15 @@ class CompilerItem(Statistics, hash_files_mixin):
             assert self.pch_hdr not in pch_dp_map
             pch_dp_map[self.pch_hdr] = self
         elif self.is_usePch():
-            self.parent = pch_dp_map[self.pch_hdr]
-            dependency.difference_update(self.parent.output)
-            dependency.difference_update(self.parent.dependency)
+            if self.pch_hdr in pch_dp_map:
+                self.parent = pch_dp_map[self.pch_hdr]
+                dependency.difference_update(self.parent.output)
+                dependency.difference_update(self.parent.dependency)
+            else:
+                pch_hash = self.read_hash_metadata(self.pch_hdr).decode('utf-8')
+                printTraceStatement(f'Read PCH metadata {self.pch_hdr}: {pch_hash}')
+                self.parent = pch_dp_map[self.pch_hdr] = pch_stub(pch_hash)
+
 
         self.dependency = sorted(dependency)
         output = sorted(self.output.split('*')) if self.output else []
@@ -2364,6 +2383,12 @@ class CompilerItem(Statistics, hash_files_mixin):
     def is_usePch(self):
         return self.pch_state == '1'
 
+    def pch_metadata(self):
+        entry = self.manifest_entry()
+        pch_hash = '|'.join( (entry.manifest_hash, entry.dependency_hash))
+        printTraceStatement(f'Write PCH metadata {self.pch_hdr}:{pch_hash}')
+        self.write_hash_metadata(self.pch_hdr, pch_hash)
+
     def manifest_hash(self):
         if self.hash: return self.hash
         additionalData = [self.compiler_hash, self.cmdline,self.full_path, os.path.dirname(self.project).upper(), str(ManifestRepository.MANIFEST_FILE_FORMAT_VERSION)]
@@ -2374,7 +2399,6 @@ class CompilerItem(Statistics, hash_files_mixin):
 
     def manifest_entry(self) -> CompilerEntry:
         assert self.output
-        hashes = getFileHashes(self.dependency)
          #safeIncludes = [collapseBasedirToPlaceholder(path) for path in sortedIncludePaths]
         output = [ list(y) for y in  zip(self.output, [getObjectFileHash(x) for x in self.output]) ]
         output += [ list(y) for y in  zip(["{}>{}".format(*x) for x in self.tlh], [getObjectFileHash(x[-1]) for x in self.tlh]) ]
@@ -2444,13 +2468,20 @@ class LinkerItem(Statistics, hash_files_mixin):
             if not r: return False
         return True
 
+def parse_flags(*flags):
+    for flag in flags:
+        if flag.strip():
+            n, v = flag.split('=')
+            globals()[n] = v
+
 def parse_input(args: object, targetcls: object = CompilerItem) -> object:
     content = read_file(args[0])
     delete_tmp_file(args[0])
     content = [x.strip() for x in content.split('^^')]
     content = [x.split('|') for x in content if x.strip()]
     targetcls.set_tool(*content[0])
-    content = content[1:]
+    parse_flags(*content[1])
+    content = content[2:]
     if len(content) > 1:
         content = sorted(content, key=lambda x: x[2], reverse=True)
     return [targetcls(*x) for x in content]
@@ -2518,13 +2549,16 @@ def processPostInvoke(cache, args, compiler):
         cleanup = cacheSize >= cfg.maximumCacheSize()
 
     content = parse_input(args)
-    if cleanup:
-        printTraceStatement('Cache size {} limit reached. Need cleaning.'.format(cacheSize))
-        cleanCache(cache)
+    if 'GenerateSharedPCH' in globals() and content and content[0].is_genPch():
+        content[0].pch_metadata()
     else:
-        for item in content:
-            item.ensure_output(cache)
-    hash_files_mixin.add_pending_buffer2()
+        if cleanup:
+            printTraceStatement('Cache size {} limit reached. Need cleaning.'.format(cacheSize))
+            cleanCache(cache)
+        else:
+            for item in content:
+                item.ensure_output(cache)
+        hash_files_mixin.add_pending_buffer2()
 
     with cache.statistics.lock, cache.statistics as stats:
         stats.updateStats(CompilerItem)

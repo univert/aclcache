@@ -178,6 +178,7 @@ namespace Aclcache
         AsyncLinker = 64,
         UseRepro = 128,
         UsePatchAssembly = 256,
+        UseSharedPchGen = 512,
     }
     [Flags] public enum BuildState : Int32
     {
@@ -371,7 +372,12 @@ namespace Aclcache
                     var artifact = new CompileArtifact(taskitem.ItemSpec, taskitem.GetMetadata("FullPath").ToUpper(), cmd, cl.PrecompiledHeader == "Create");
                     if (!string.IsNullOrEmpty(cl.PrecompiledHeaderFile))
                     {
-                        artifact.PchHeader = cl.PrecompiledHeaderFile;
+                        if (!string.IsNullOrEmpty(cl.PrecompiledHeaderOutputFile))
+                        {
+                            artifact.PchHeader =  (new TaskItem(cl.PrecompiledHeaderOutputFile)).GetMetadata("FullPath").ToUpper();
+                        }
+                        else
+                            artifact.PchHeader = cl.PrecompiledHeaderFile;
                     }
                     if (!CompileArtifactMap.ContainsKey(artifact.ItemSpec))
                     {
@@ -440,8 +446,12 @@ namespace Aclcache
             {
                 if (CompileArtifacts == null) return;
                 State |= BuildState.ClCachePreInvoked;
+                if (IsSharedPch())
+                {
+                    return;
+                }
                 var tmpfile = Utils.GetTemporaryFile(".1.txt");
-                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToCL, WindowsSDKVersion, VCVersion))
+                using (var writer = GetWriter(tmpfile, PathToCL))
                 {
                     foreach (var item in CompileArtifacts)
                     {
@@ -464,6 +474,11 @@ namespace Aclcache
                 }
             }
 
+            private bool IsSharedPch()
+            {
+                return Strategy.HasFlag(CacheStrategy.UseSharedPchGen); //CompileArtifacts.Count == 1 && CompileArtifacts[0].GenPch
+            }
+
             public virtual void PostInvokeClcache()
             {
                 if (!State.HasFlag(BuildState.ClCachePreInvoked) || !State.HasFlag(BuildState.CompileFinished)
@@ -474,7 +489,7 @@ namespace Aclcache
 
                 var tmpfile = Utils.GetTemporaryFile(".2.txt");
                 bool something = false;
-                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToCL, WindowsSDKVersion, VCVersion))
+                using (var writer = GetWriter(tmpfile, PathToCL))
                 {
                     foreach (var item in CompileArtifacts)
                     {
@@ -487,7 +502,7 @@ namespace Aclcache
                 }
                 if (something)
                 {
-                    InvokeClCache($"-q \"{tmpfile}\" -b \"{PathToCL}\" -f \"{Desc}\"", out var ret, Strategy.HasFlag(AsyncCcache));
+                    InvokeClCache($"-q \"{tmpfile}\" -b \"{PathToCL}\" -f \"{Desc}\"", out var ret, Strategy.HasFlag(AsyncCcache) || IsSharedPch() );
                 }
                 else
                 {
@@ -539,7 +554,7 @@ namespace Aclcache
                 this.LinkArtifact.Cmdline = tool.GenerateCommandLineExceptSwitches(new string[] { "Sources" }, VCToolTask.CommandLineFormat.ForTracking);
                 this.LinkArtifact.MainOut = (new TaskItem(output)).GetMetadata("FullPath").ToUpper();
                 var tmpfile = Utils.GetTemporaryFile(".3.txt");
-                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToLinker, WindowsSDKVersion, VCVersion))
+                using (var writer = GetWriter(tmpfile, PathToLinker))
                 {
                     writer.WriteRow(string.Join("*", LinkArtifact.Input.Concat(LinkArtifact.AdditionalInput)), LinkArtifact.Cmdline, LinkArtifact.MainOut);
                 }
@@ -618,7 +633,7 @@ namespace Aclcache
                 depends.ExceptWith(inputs);
 
                 var tmpfile = Utils.GetTemporaryFile(".4.txt");
-                using (var writer = new CsvFileWriter(tmpfile, FullPath, PathToLinker, WindowsSDKVersion, VCVersion))
+                using (var writer = GetWriter(tmpfile, PathToLinker))
                 {
                     writer.WriteRow(string.Join("*", LinkArtifact.Input.Concat(LinkArtifact.AdditionalInput)), this.LinkArtifact.Cmdline, this.LinkArtifact.MainOut, string.Join("*", depends), string.Join("*", outputs));
                 }
@@ -628,6 +643,14 @@ namespace Aclcache
                     InvokeClCache($"-n \"{tmpfile}\" -b \"{PathToLinker}\" -f \"{Desc}\"", out var ret, Strategy.HasFlag(AsyncLinker));
                 }
             }
+
+            private CsvFileWriter GetWriter(string tmpfile, string tool)
+            {
+                var writer = new CsvFileWriter(tmpfile, FullPath, tool, WindowsSDKVersion, VCVersion);
+                writer.WriteRow(string.Empty, IsSharedPch() ? "GenerateSharedPCH=1" : string.Empty );
+                return writer;
+            }
+
             public bool IsOldStyleClcache => Strategy.HasFlag(UseCCache) && Strategy.HasFlag(UseNoPch) && (Strategy.HasFlag(UseNoPdb) || Strategy.HasFlag(UseZ7));
             public bool IsNewStyleClcache => Strategy.HasFlag(UseCCache) && !Strategy.HasFlag(UseNoPch);
 
@@ -845,7 +868,9 @@ namespace Aclcache
                     project.Strategy |= CacheStrategy.UseNoPdb;
                 if (!string.IsNullOrEmpty(ProjectProperty(engine, "ACLCACHE_USEZ7")))
                     project.Strategy |= CacheStrategy.UseZ7;
-
+                if (!string.IsNullOrEmpty(ProjectProperty(engine, "GenerateSharedPCH")))
+                    project.Strategy |= CacheStrategy.UseSharedPchGen;
+                
                 if (ProjectProperty(engine, "ACLCACHE_SYNC") is string _async && Int32.TryParse(_async, out var async_v))
                 {
                     if ((async_v & 1) == 1)
