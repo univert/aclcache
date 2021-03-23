@@ -972,7 +972,7 @@ namespace Aclcache
         {
 
             if (!string.IsNullOrEmpty(project.LinkArtifact.MainOut)) {
-                string r = $"{project.LinkArtifact.MainOut} \n";
+                string r = $"{project.LinkArtifact.MainOut}\n";
                 var file = ProjectProperty(engine, "ACLCACHE_OUTPUT_BINARY_FILES");
                 if (Int32.TryParse(file, out var _)) return;
                 if (!string.IsNullOrEmpty(file))
