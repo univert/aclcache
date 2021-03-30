@@ -4,9 +4,9 @@ powershell  -File install_dotnet.ps1
 FOR /F "tokens=* USEBACKQ" %%F IN (`tool\gitversion.exe /updateassemblyinfo /showvariable NuGetVersion`) DO (
 SET version=%%F
 )
-mkdir acadbuildres\results
-mkdir acadbuildres\output
-ECHO %version% > acadbuildres\output\version.txt
+mkdir buildres\results
+mkdir buildres\output
+ECHO %version% > buildres\output\version.txt
 for /f "usebackq tokens=*" %%i in (`"c:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
   set MSVCDIR=%%i\VC\Auxiliary\Build
 )

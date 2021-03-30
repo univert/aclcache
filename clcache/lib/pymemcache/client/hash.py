@@ -406,7 +406,7 @@ class HashClient(object):
             client_batches[client.server].append(key)
 
         for server, keys in client_batches.items():
-            client = self.clients['%s:%s' % server]
+            client = self.clients[server[0]]
             new_args = list(args)
             new_args.insert(0, keys)
 

@@ -3,7 +3,8 @@ from typing import List
 from dataclasses import dataclass, asdict
 from json import dumps,loads
 import traceback
-from pymemcache.client.base import Client
+from pymemcache import Client, HashClient
+from pymemcache.client.base import check_key_helper
 from pymemcache.serde import (python_memcache_serializer,
                               python_memcache_deserializer)
 from .__main__ import getObjectFileHash, FILE_CHUNK_SIZE, printTraceStatement, ACLCACHE_MEMCCACHE_BIG_KEY
@@ -146,6 +147,115 @@ class memcached_client(Client):
 
     def flush(self):
         self.flush_all()
+
+class memcached_hashclient(HashClient):
+    def __init__(self, server, compressor=None):
+        super(memcached_hashclient, self).__init__(server, ignore_exc=False,retry_attempts=99999,
+                        serializer=python_memcache_serializer,
+                        deserializer=python_memcache_deserializer,
+                        timeout=60,
+                        connect_timeout=15,
+                        key_prefix=b'', encoding='utf-8', allow_unicode_keys=True)
+        self.compressor = compressor
+
+    def add_server(self, server, port=None):
+        if isinstance(server, tuple):
+            key = server[0]
+
+        client = Client(server, **self.default_kwargs)
+
+        self.clients[key] = client
+        self.hasher.add_node(key)
+
+    @retry
+    def fetch(self, key):
+        result = self.get(key)
+        return result
+
+    def exist(self, key):
+        if self.exist_multi(key):
+            return True
+        key += ACLCACHE_MEMCCACHE_BIG_KEY
+        buffer = self.fetch(key)
+        if buffer:
+            desc = big_file_descriptor.unpack(buffer)
+            return self.exist_multi(*desc.iter_hashes())
+        return False
+
+    @retry
+    def exist_multi(self, *keys):
+        for key in keys:
+            s = self.touch(key, noreply=False)
+            if not s:
+                return False
+        return True
+
+    @retry
+    def store(self, key, value):
+        result = self.set (key, value, expire=0, noreply=False, flags=None)
+        if not result:
+            raise Exception('Store failed for key {}'.format(key))
+        return True
+
+    @retry
+    def store_multi(self, keys, values, noreply=False):
+        for x,y in zip(keys, values):
+            r = self.set(x, y, noreply=noreply, flags=None)
+            if not r:
+                raise Exception('store_multi failed')
+        return True
+
+    def store_file(self, key, file_name):
+        data = open(file_name,'rb').read()
+        if self.compressor:
+            data = self.compressor[0].compress(data)
+        if len(data) < FILE_CHUNK_SIZE:
+            return self.store(key, data) and len(data)
+        key += ACLCACHE_MEMCCACHE_BIG_KEY
+        desc = big_file_descriptor()
+        chunks = []
+        keys = []
+        for chunk in (data[i:i+FILE_CHUNK_SIZE] for i in range(0, len(data), FILE_CHUNK_SIZE)):
+            h = desc.add_chunk(chunk)
+            chunks.append(chunk)
+            keys.append(h)
+        desc = desc.pack()
+        keys.append(key)
+        chunks.append(desc)
+        return self.store_multi(keys, chunks, noreply=False) and len(data)
+
+    @retry
+    def fetch_file(self, key):
+        buffer = self.fetch(key)
+        if buffer:
+            if self.compressor:
+                buffer = self.compressor[1].decompress(buffer)
+            return buffer
+        buffer = self.fetch(key + ACLCACHE_MEMCCACHE_BIG_KEY)
+        if not buffer:
+            return None
+        desc = big_file_descriptor.unpack(buffer)
+        result = self.get_many(desc.iter_hashes())
+        result = b''.join((result[x] for x in desc.iter_hashes())) if result else None
+        if result and len(result) == desc.size:
+            if self.compressor:
+                result = self.compressor[1].decompress(result)
+            return result
+        else:
+            printTraceStatement('File descriptor size mismatch')
+        return None
+
+    def ___get_client(self, key):
+        si = len(self.clients)
+        server = len(self.hasher.nodes)
+        # We've ran out of servers to try
+
+        client = self.clients[self.hasher.nodes[sum((ord(x) for x in key)) % server]]
+        return client
+
+    def flush(self):
+        self.flush_all()
+
 
 def hash_checker(server, hash):
     client = memcached_client(server)

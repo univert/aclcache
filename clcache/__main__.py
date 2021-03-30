@@ -2473,6 +2473,7 @@ def parse_flags(*flags):
         if flag.strip():
             n, v = flag.split('=')
             globals()[n] = v
+            os.environ[n] = v
 
 def parse_input(args: object, targetcls: object = CompilerItem) -> object:
     content = read_file(args[0])

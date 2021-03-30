@@ -6,7 +6,7 @@ from pymemcache.serde import (python_memcache_serializer,
 
 from .__main__ import CacheFileStrategy, Manifest, printTraceStatement, CompilerArtifacts, \
     CACHE_COMPILER_OUTPUT_STORAGE_CODEC
-from .memcached import memcached_client
+from .memcached import memcached_client, memcached_hashclient
 
 class CacheDummyLock:
     def __enter__(self):
@@ -51,20 +51,19 @@ class CacheMemcacheStrategy:
     def connect(self, server):
         server = CacheMemcacheStrategy.splitHosts(server)
         assert server, "{} is not a suitable server".format(server)
-        if len(server) != 1:
-            raise ValueError(f"{server} is not a suitable server")
+        if len(server) == 1:
+            self.client = memcached_client(server[0], self.compressor)
         else:
-            from pymemcache.client.hash import HashClient
-            clientClass = HashClient
-        self.client = memcached_client(server[0], self.compressor)
+            self.client = memcached_hashclient(server, self.compressor)
 
+        self.servers = server
         # XX key_prefix ties fileStrategy cache to memcache entry
         # because tests currently the integration tests use this to start with clean cache
         # Prevents from having cache hits in when code base is in different locations
         # adding code to production just for testing purposes
 
     def server(self):
-        return self.client.server
+        return self.servers
 
     @staticmethod
     def splitHost(host):
@@ -85,7 +84,8 @@ class CacheMemcacheStrategy:
         return [CacheMemcacheStrategy.splitHost(h) for h in hosts.split(',')]
 
     def __str__(self):
-        s = "{}  @{}:{}".format(self.fileStrategy.__str__(), *self.server())
+        s = "{}  @".format(self.fileStrategy.__str__())
+        s += ','.join(['{}:{}'.format(*x) for x in self.server()])
         if self.compress:
             s += f"[{self.compress},level:{self.compress_level}]"
         return s

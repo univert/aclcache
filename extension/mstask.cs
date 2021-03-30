@@ -647,7 +647,10 @@ namespace Aclcache
             private CsvFileWriter GetWriter(string tmpfile, string tool)
             {
                 var writer = new CsvFileWriter(tmpfile, FullPath, tool, WindowsSDKVersion, VCVersion);
-                writer.WriteRow(string.Empty, IsSharedPch() ? "GenerateSharedPCH=1" : string.Empty );
+                writer.WriteRow(string.Empty, IsSharedPch() ? "GenerateSharedPCH=1" : string.Empty ,
+                    Environment.GetEnvironmentVariable("CL") is string cl ? $"CL={cl}" : string.Empty,
+                    Environment.GetEnvironmentVariable("_CL_") is string _cl ? $"_CL_={_cl}" : string.Empty
+                    );
                 return writer;
             }
 
