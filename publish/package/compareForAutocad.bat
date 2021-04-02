@@ -10,4 +10,5 @@ for /f %%i in (develop\tools\bin\CI\build\aclcache_blacklist.txt) do (
 copy /Y %temp%\hash1.txt %CI_RES%\outputfiles1.hash.filtered.txt
 copy /Y %temp%\hash2.txt %CI_RES%\outputfiles2.hash.filtered.txt
 fc %temp%\hash1.txt %temp%\hash2.txt > "%CI_RES%\compare.result.txt"
+call %~dp0acadTools\aclcache_validate.bat
 exit /b 0

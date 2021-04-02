@@ -11,6 +11,7 @@
     <file src="override.targets;initialize.bat;finish.bat;md5deep64.exe;compareForAutocad.bat;compare.bat"  />
     <file src="..\..\*.py" target="bin" />
     <file src="..\..\extension\bin\Release\*.dll" target="bin" />
+    <file src="acadTools\*" target="acadTools" />
     <file exclude="**\*.pyc" src="..\..\clcache\**" target="bin\clcache" />
   </files>
 </ns0:package>
