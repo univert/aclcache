@@ -33,6 +33,7 @@ if "%ACLCACHE_MODE%"=="" goto END
 
 doskey aclcache="%ACLCACHE_PYTHON%\python.exe" -E "%ACLCACHE_LOCATION%\aclcache.py" $*
 doskey clcache="%ACLCACHE_PYTHON%\python.exe" -E "%ACLCACHE_LOCATION%\aclcache.py" $*
+doskey aclhash="%ACLCACHE_PYTHON%\python.exe" -E "%ACLCACHE_LOCATION%\hasher.py" $*
 
 set ACLCACHE_CMD="%ACLCACHE_PYTHON%\python.exe" -E "%ACLCACHE_LOCATION%\aclcache.py"
 

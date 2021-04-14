@@ -1,3 +1,4 @@
+python3 -E "%~dp0bin\hasher.py" %PACK_PATH%\aclcache_output_binary_files.txt | sort /+34 > %PACK_PATH%\outputfiles2.hash.txt
 copy /Y %PACK_PATH%\outputfiles1.hash.txt %CI_RES%\outputfiles1.hash.txt
 copy /Y %PACK_PATH%\outputfiles2.hash.txt %CI_RES%\outputfiles2.hash.txt
 copy /Y %PACK_PATH%\aclcache_output_binary_files.txt %CI_RES%\aclcache_output_binary_files.txt
