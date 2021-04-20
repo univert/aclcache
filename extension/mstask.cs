@@ -836,12 +836,18 @@ namespace Aclcache
                             project.PostInvokeClcache();
                             LogTiming(entry, project);
                             LogBinaryFiles(entry, project);
-                            _projects.Remove(hash);
+                            lock (_projects)
+                            {
+                                _projects.Remove(hash);
+                            }
                         }
                     }
                 }));
                 engine.PopulateProjectStrategy(project);
-                _projects.Add(hash, project);
+                lock (_projects)
+                {
+                    _projects.Add(hash, project);
+                }
             }
             project.SetCurrentEngine(engine);
             return project;
