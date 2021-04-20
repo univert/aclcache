@@ -17,7 +17,7 @@ from atomicwrites import atomic_write
 from argparse import ArgumentParser
 import xxhash
 
-VERSION = "5.0-dev"
+VERSION = "5.1-dev"
 
 FILE_CHUNK_SIZE = 1000 << 10
 
@@ -260,7 +260,7 @@ class ManifestRepository:
     # invalidation, such that a manifest that was stored using the old format is not
     # interpreted using the new format. Instead the old file will not be touched
     # again due to a new manifest hash and is cleaned away after some time.
-    MANIFEST_FILE_FORMAT_VERSION = 10
+    MANIFEST_FILE_FORMAT_VERSION = 11
 
     def __init__(self, manifestsRootDir):
         self._manifestsRootDir = manifestsRootDir
@@ -2031,16 +2031,22 @@ class CompilerEntry:
 
     def __post_init__(self, parent):
         if not self.dependency_hash:
-            self.dependency_hash = self.generate_dependency_hash(self.dependency)
+            self.dependency_hash , hashes = self.generate_dependency_hash(self.dependency)
+            self.dependency = list(zip(self.dependency, hashes))
         if parent:
             self.parent_hash = '|'.join( (parent.entry.manifest_hash, parent.entry.dependency_hash) )
 
     def match_local(self):
-        return self.dependency_hash == self.generate_dependency_hash(self.dependency)
+        return self.dependency_hash == self.generate_dependency_hash(next(zip(*self.dependency)) if self.dependency else [])[0]
 
     @staticmethod
     def generate_dependency_hash(files):
-        return ManifestRepository.getIncludesContentHashForFiles(files)
+        try:
+            listOfHashes = getFileHashes(files)
+        except FileNotFoundError:
+            raise IncludeNotFoundException
+
+        return HashAlgorithm(','.join(listOfHashes).encode()).hexdigest(), listOfHashes
 
 class hash_files_mixin:
     file_debug = 'ACLCACHE_FILEDEBUG' in os.environ
@@ -2242,7 +2248,7 @@ class hash_files_mixin:
                 raise IncludeNotFoundException
             try:
                 hash = self.read_hash_metadata(file)
-                all[i] = hash
+                all[i] = hash.decode('utf-8')
                 if stat.st_size == 0:
                     missing.append((hash.decode('utf-8'), file))
             except:
@@ -2254,10 +2260,10 @@ class hash_files_mixin:
             else:
                 items = [cachedGetFileHash(filePath) for filePath in map(files.__getitem__, not_found)]
             assert len(items) == len(not_found)
-            list(map(all.__setitem__, not_found, (x.encode('utf-8') for x in items )))
+            list(map(all.__setitem__, not_found, items))
         except:
             raise IncludeNotFoundException
-        return HashAlgorithm(b''.join(all)).hexdigest()
+        return HashAlgorithm(''.join(all).encode()).hexdigest(), all
 
 
     def generate_dependency_hash(self, files: List[str], missing: List = []) -> str:
@@ -2292,11 +2298,10 @@ class LinkerEntry(hash_files_mixin):
 
     def __post_init__(self):
         if not self.dependency_hash:
-            self.dependency_hash = self.generate_dependency_hash(self.dependency)
-
+            self.dependency_hash, hashes = self.generate_dependency_hash(self.dependency)
+            self.dependency = list(zip(self.dependency, hashes))
     def match_local(self):
-        return self.dependency_hash == self.generate_dependency_hash(self.dependency)
-
+        return self.dependency_hash == self.generate_dependency_hash([x[0] for x in self.dependency])[0]
 
 
 @functools.lru_cache(maxsize=128)
@@ -2444,10 +2449,11 @@ class LinkerItem(Statistics, hash_files_mixin):
 
     def manifest_hash(self):
         if self.hash: return self.hash
-        objHahs = self.generate_dependency_hash(self.inputs, self.pending_objs)
+        objHahs, allhashes = self.generate_dependency_hash(self.inputs, self.pending_objs)
         assert objHahs
         additionalData = self.inputs + [self.tool_hash, self.cmdline, os.path.dirname(self.project.upper()), objHahs, str(ManifestRepository.MANIFEST_FILE_FORMAT_VERSION)]
         self.hash = HashAlgorithm('|'.join(additionalData).encode('utf-8')).hexdigest()
+        self.inputs_hashes = list(zip(self.inputs, allhashes))
         return self.hash
 
     def manifest_entry(self) -> CompilerEntry:
@@ -2459,7 +2465,7 @@ class LinkerItem(Statistics, hash_files_mixin):
         self.entry = LinkerEntry(manifest_hash = self.manifest_hash(),
                                  file=self.full_path, cmdline=self.cmdline,
                                  output=output, dependency=self.dependency,
-                                 dependency_hash=None, project=self.project, tool=self.tool_hash, input=self.inputs)
+                                 dependency_hash=None, project=self.project, tool=self.tool_hash, input=self.inputs_hashes)
         return self.entry
 
     def retrieve_pendings(self, cache):
