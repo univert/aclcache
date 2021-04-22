@@ -1,1 +1,0 @@
-python3 %~dp0acadTools\compare2files.py -f1 %PACK_PATH%\outputfiles1.hash.txt -f2 %PACK_PATH%\outputfiles2.hash.txt > "%CI_RES%\compare.result.txt"
