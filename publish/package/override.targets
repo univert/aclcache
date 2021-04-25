@@ -34,6 +34,7 @@
       <Deterministic  Condition="$(_USEBREPRO) == '1'">true</Deterministic>
       <DebugSymbols  Condition="$(_USENOPDB) == '1'">false</DebugSymbols>
       <DebugType Condition="$(_USENOPDB) == '1'">None</DebugType>
+      <LinkIncremental Condition="$(_USEBREPRO) == '1'">false</LinkIncremental>
     </PropertyGroup>
     <ItemDefinitionGroup>
         <ClCompile Condition="$(ACLCACHE_USEZ7) == '1'">
@@ -68,6 +69,7 @@
            <AdditionalOptions Condition="'%(CompileAsManaged)' == 'true'" >%(AdditionalOptions) /Brepro</AdditionalOptions>
         </ClCompile>
         <Link Condition="$(_USEBREPRO) == '1'">
+          <LinkIncremental>false</LinkIncremental>
           <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
           <AdditionalOptions>%(AdditionalOptions) /experimental:deterministic</AdditionalOptions>
         </Link>
