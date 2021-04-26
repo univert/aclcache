@@ -149,6 +149,9 @@ namespace Aclcache
                 startInfo.RedirectStandardInput = redirect;
 
             }
+            startInfo.EnvironmentVariables.Remove("PYTHONDONTWRITEBYTECODE");
+            startInfo.EnvironmentVariables.Remove("PYTHONUNBUFFERED");
+
             return startInfo;
         }
     }
