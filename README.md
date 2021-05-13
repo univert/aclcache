@@ -291,6 +291,8 @@ Caveats
 - Currently aclcache does not support mix mode compiling (managed module).
 - aclcache is not compatible with [/Zi][ziz7] copmiler switch, it uses [/Z7][ziz7] compiler switch if pdb files is needed. However, if you enable genreate pdb files, linker cache's hit rate may be impacted because [/Z7][ziz7] causes the object files generated not deterministic.
 - ACLCACHE_HARDLINK is not very safe for development environment if your build your projects repeastedly or there is a custom step that modifies .obj/binary files.
+- Aclcache may fail to pick up new header files in some rare scenarios. Header files that were used by the compiler are recorded, but header files that were not used, but would have been used if they existed, are not. 
+So, when aclcache checks if a result can be taken from the cache, it currently can’t check if the existence of a new header file should invalidate the result.
 
 [ziz7]: https://docs.microsoft.com/en-us/cpp/build/reference/z7-zi-zi-debug-information-format
 
