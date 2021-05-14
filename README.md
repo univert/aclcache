@@ -27,12 +27,16 @@ Currently aclcache support the following functionalities:
 
 - Precompiled header support for compiler cache:
 - PDB files support
-- Linker cache (caches linker.exe output)
+- Linker cache (caches linker.exe and lib.exe output)
 - [import directive][] compilation support
+- Use memcached a backend storage (multiple memcached server support for scaling)
+- Storage compression ([zstd][])
 - Mixed mode compilation support (planned)
+- Cloud based storage (AWS S3 or Azure Blob) (planned)
 
 [clcache]: https://github.com/frerich/clcache
 [import directive]: https://docs.microsoft.com/en-us/cpp/preprocessor/hash-import-directive-cpp?view=vs-2019
+[zstd]: https://github.com/facebook/zstd
 
 ### Runtime requirements
 
@@ -44,17 +48,17 @@ Currently aclcache support the following functionalities:
 Enable aclcache in your dev environment
 --------------------------------------------------
 
-1. Download the latest .nupkg release
+1. Download the latest release version of aclache nuget package
 
-2. Unzip the package to a folder called aclcache_folder
+2. Unzip the package to a folder called <aclcache_folder>
 
-3. Set environment variables and call aclcache_initialize.bat
+3. Set environment variables and call initialize.bat
 ```batch
 set ACLCACHE_MODE=3
-set ACLCACHE_DIR=<cache location>
+set ACLCACHE_DIR=<cache location e.g. c:\aclcache>
 set ACLCACHE_SIZE=<max cache size in GB, 100 recommended>
-set ACLCACHE_PYTHON=<python location>
-cd aclcache_folder
+set ACLCACHE_PYTHON=<python 3.7 64bit installation directory e.g. C:\python37 >
+cd <aclcache_folder>
 initialize.bat
 ```
 
@@ -85,13 +89,21 @@ the `aclcache` command with the following command line switches
 **--start_svr**<br/>
     Restart the header hash server process.
 
+**--memcached(-B)**<br/>
+    Set memcached server to use. You can specify multiple servers by seperating them by comma. e.g. `--memcached 1.2.3.4,2.3.4.5`.
+    If you don't want to use memcached server any more. use `--memcached ""`
+
+**--compress(-R)**<br/>
+    Set compression algorithm to use currently only support zstd. e.g. `--compress zstd`.
+    If you don't want to use compression any more. use `--compress ""`
+
+
 FAQs
 ----
 
 ### **How to verify aclcache is enabled?**
 
-If aclcache is enabled after you set environment variables and 
-call `%ASSEMBLYREF%\aclcache\initialize.bat`, you will be able to execute
+If aclcache is enabled, you will be able to execute
 the `aclcache -s` command and see the aclcache configuration and statistics.
 Note that `aclcache` is a doskey command and it expand to appropiate command paths 
 depend on your environement settings.
@@ -184,6 +196,11 @@ Environment Variables
  1     | Enable compiler cache support         
  2     | Enable [linker cache][How clcache works] support           
  3     | Enable both compiler and [linker cache][How clcache works]
+ 
+### ACLCACHE_SKIPGET
+
+If ACLCACHE_SKIPGET=1, and ACLCACHE_MODE=3, then .obj file will not be downloaded/copied and only a dummy .obj file will be generated. This is to boost performance.
+This variable is recommended to be used in the case of mencached settings. 
 
 ### ACLCACHE_DIR
 
