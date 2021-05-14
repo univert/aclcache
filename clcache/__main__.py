@@ -260,7 +260,7 @@ class ManifestRepository:
     # invalidation, such that a manifest that was stored using the old format is not
     # interpreted using the new format. Instead the old file will not be touched
     # again due to a new manifest hash and is cleaned away after some time.
-    MANIFEST_FILE_FORMAT_VERSION = 11.1
+    MANIFEST_FILE_FORMAT_VERSION = 12
 
     def __init__(self, manifestsRootDir):
         self._manifestsRootDir = manifestsRootDir
@@ -651,7 +651,7 @@ class CacheFileStrategy:
 
 class Cache:
     def __init__(self, cacheDirectory=None):
-        global g_use_clserver
+        global g_use_clserver, g_hash_base
         memcachd = os.environ.get("ACLCACHE_MEMCACHED")
         compress = os.environ.get("ACLCACHE_COMPRESS")
         self.strategy = CacheFileStrategy(cacheDirectory=cacheDirectory)
@@ -660,6 +660,8 @@ class Cache:
             compress = cfg.Compress() or compress
             if cfg.HashServer():
                 g_use_clserver = True
+            if cfg.HashBase():
+                g_hash_base = cfg.HashBase()
         if memcachd:
             from .storage import CacheMemcacheStrategy
             self.strategy = CacheMemcacheStrategy(memcachd, cacheDirectory=self.strategy, compress=compress)
@@ -752,7 +754,7 @@ class PersistentJSONDict(defaultdict):
 
 
 class Configuration:
-    _defaultValues = {"MaximumCacheSize": 214748364800*100, "MemcachedServer": '', 'Compress': '', 'HashServer': ''} # 100 GiB
+    _defaultValues = {"MaximumCacheSize": 214748364800*100, "MemcachedServer": '', 'Compress': '', 'HashServer': '', 'HashBase': ''} # 100 GiB
 
     def __init__(self, configurationFile):
         self._configurationFile = configurationFile
@@ -792,6 +794,21 @@ class Configuration:
 
     def HashServer(self):
         return self._cfg['HashServer']
+
+    def HashBase(self):
+        return self._cfg['HashBase']
+
+    def setHashBase(self, v):
+        try:
+            with open(v, 'rb') as input:
+                buf = input.read()
+                if buf:
+                    self._cfg['HashBase'] = HashAlgorithm(buf).hexdigest()
+                else:
+                    self._cfg['HashBase'] = ''
+        except:
+            self._cfg['HashBase'] = ''
+        printTraceStatement('set hash base to "{}"'.format(self._cfg['HashBase']))
 
 
 class StatisticsMixin:
@@ -1744,6 +1761,7 @@ def printStatistics2(cache, ifjson= False):
     clcache statistics:
       current cache dir           : {str(cache)}
       maximum cache size          : {cfg.maximumCacheSize() / (1024 * 1024 * 1024):.2f} GB
+      hash base                   : "{cfg.HashBase()}"
       cache size                  : {stats.currentCacheSize() / (1024 * 1024 * 1024):.2f} GB
       cache entries               : {stats.numCacheEntries()}
       #manifest count             : {mat.ManifestCount}
@@ -1937,6 +1955,7 @@ def _main():
     parser.add_argument('--manifest', type=str)
     parser.add_argument('--key', nargs=2,  metavar=('thekey', 'filename'),)
     parser.add_argument('-Q', '--hashserver', dest='hashserver', type=int, default=None, help='to use hash server')
+    parser.add_argument('-H', '--basehash', dest='basehash', type=str, default=None, help='set base hash file path')
 
     args, other_args = parser.parse_known_args()
 
@@ -1972,6 +1991,9 @@ def _main():
     if args.hashserver is not None:
         with cache.lock, cache.configuration as cfg:
             cfg.setUseHashServer(args.hashserver)
+    if args.basehash is not None:
+        with cache.lock, cache.configuration as cfg:
+            cfg.setHashBase(args.basehash)
 
 
     len(other_args) or sys.exit(0)
@@ -2022,6 +2044,7 @@ def printErrStr(message):
 class CompilerEntry:
     manifest_hash: str =None;
     parent_hash: str = None;
+    base_hash: str = None;
     file: str =None;project: str= None;compiler:str= None; cmdline: str =None;
     output: List =None;
     parent:  InitVar[object] = None;
@@ -2289,6 +2312,7 @@ class hash_files_mixin:
 class LinkerEntry(hash_files_mixin):
     manifest_hash: str =None;
     file: str =None;project: str= None;tool:str= None; cmdline: str =None;
+    base_hash: str = None;
     output: List =None;
     dependency_hash: str=None;dependency: List= None;
     input: List = None;
@@ -2396,7 +2420,7 @@ class CompilerItem(Statistics, hash_files_mixin):
 
     def manifest_hash(self):
         if self.hash: return self.hash
-        additionalData = [self.compiler_hash, self.cmdline,self.full_path, os.path.dirname(self.project).upper(), str(ManifestRepository.MANIFEST_FILE_FORMAT_VERSION)]
+        additionalData = [self.compiler_hash, self.cmdline,self.full_path, os.path.dirname(self.project).upper(), str(ManifestRepository.MANIFEST_FILE_FORMAT_VERSION), g_hash_base]
         if self.parent:
             additionalData += [self.parent.manifest_hash(), self.parent.entry.dependency_hash ]
         self.hash = getFileHash(self.full_path, '|'.join(additionalData))
@@ -2410,7 +2434,7 @@ class CompilerItem(Statistics, hash_files_mixin):
         self.entry = CompilerEntry(manifest_hash = self.manifest_hash(),
             file=self.full_path, cmdline=self.cmdline,
                               output=output, dependency=self.dependency,
-                              dependency_hash=None, project=self.project, compiler=self.compiler_hash, parent=self.parent)
+                              dependency_hash=None, project=self.project, compiler=self.compiler_hash, parent=self.parent, base_hash=g_hash_base)
         return self.entry
 
     def __hash__(self):
@@ -2419,6 +2443,8 @@ class CompilerItem(Statistics, hash_files_mixin):
     def __eq__(self, other):
         return self.item_spec == other.item_spec
 
+
+g_hash_base = ''
 
 @dataclass
 class LinkerItem(Statistics, hash_files_mixin):
@@ -2451,7 +2477,7 @@ class LinkerItem(Statistics, hash_files_mixin):
         if self.hash: return self.hash
         objHahs, allhashes = self.generate_dependency_hash(self.inputs, self.pending_objs)
         assert objHahs
-        additionalData = self.inputs + [self.tool_hash, self.cmdline, os.path.dirname(self.project.upper()), objHahs, str(ManifestRepository.MANIFEST_FILE_FORMAT_VERSION)]
+        additionalData = self.inputs + [self.tool_hash, self.cmdline, os.path.dirname(self.project.upper()), objHahs, str(ManifestRepository.MANIFEST_FILE_FORMAT_VERSION), g_hash_base]
         self.hash = HashAlgorithm('|'.join(additionalData).encode('utf-8')).hexdigest()
         self.inputs_hashes = list(zip(self.inputs, allhashes))
         return self.hash
@@ -2465,7 +2491,7 @@ class LinkerItem(Statistics, hash_files_mixin):
         self.entry = LinkerEntry(manifest_hash = self.manifest_hash(),
                                  file=self.full_path, cmdline=self.cmdline,
                                  output=output, dependency=self.dependency,
-                                 dependency_hash=None, project=self.project, tool=self.tool_hash, input=self.inputs_hashes)
+                                 dependency_hash=None, project=self.project, tool=self.tool_hash, input=self.inputs_hashes, base_hash=g_hash_base)
         return self.entry
 
     def retrieve_pendings(self, cache):
