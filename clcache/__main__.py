@@ -651,13 +651,17 @@ class CacheFileStrategy:
 
 class Cache:
     def __init__(self, cacheDirectory=None):
-        global g_use_clserver, g_hash_base
+        global g_use_clserver, g_hash_base, FILE_CHUNK_SIZE
         memcachd = os.environ.get("ACLCACHE_MEMCACHED")
         compress = os.environ.get("ACLCACHE_COMPRESS")
         self.strategy = CacheFileStrategy(cacheDirectory=cacheDirectory)
         with self.strategy.configuration as cfg:
             memcachd = cfg.MemcachedServer() or memcachd
             compress = cfg.Compress() or compress
+            chunk_size = os.environ.get("ACLCACHE_CHUNK_SIZE")  or cfg.ChunkSize() or FILE_CHUNK_SIZE
+            chunk_size = int(chunk_size)
+            if chunk_size > FILE_CHUNK_SIZE:
+                FILE_CHUNK_SIZE = chunk_size
             if cfg.HashServer():
                 g_use_clserver = True
             if cfg.HashBase():
@@ -754,7 +758,7 @@ class PersistentJSONDict(defaultdict):
 
 
 class Configuration:
-    _defaultValues = {"MaximumCacheSize": 214748364800*100, "MemcachedServer": '', 'Compress': '', 'HashServer': '', 'HashBase': ''} # 100 GiB
+    _defaultValues = {"MaximumCacheSize": 214748364800*100, "MemcachedServer": '', 'Compress': '', 'HashServer': '', 'HashBase': '', 'ChunkSize': FILE_CHUNK_SIZE} # 100 GiB
 
     def __init__(self, configurationFile):
         self._configurationFile = configurationFile
@@ -809,6 +813,12 @@ class Configuration:
         except:
             self._cfg['HashBase'] = ''
         printTraceStatement('set hash base to "{}"'.format(self._cfg['HashBase']))
+
+    def ChunkSize(self):
+        return self._cfg['ChunkSize']
+
+    def setChunkSize(self, v):
+        self._cfg['ChunkSize'] = v
 
 
 class StatisticsMixin:
@@ -1941,6 +1951,7 @@ def _main():
     parser.add_argument('-M', '--max', dest='max_size', type=float, help='set maximum cache size (in GB)')
     parser.add_argument('-B', '--memcached', dest='memcached', type=str, default=None, help='set memcached server')
     parser.add_argument('-R', '--compress', dest='compress', type=str, default=None, help='set compression level')
+    parser.add_argument('-k', '--chunk', dest='chunk', type=int, default=None, help='set file chunk size')
     parser.add_argument('-b', '--compiler', dest='compiler', type=str)
     parser.add_argument('-f', '--project', dest='project', type=str)
     parser.add_argument('-p', '--prepare', action='store_true')
@@ -1994,6 +2005,10 @@ def _main():
     if args.basehash is not None:
         with cache.lock, cache.configuration as cfg:
             cfg.setHashBase(args.basehash)
+    if args.chunk is not None:
+        with cache.lock, cache.configuration as cfg:
+            cfg.setChunkSize(args.chunk)
+
 
 
     len(other_args) or sys.exit(0)

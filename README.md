@@ -263,6 +263,9 @@ For example, the following override can disable aclcache for mix mode compilatio
 </Project>
 ```
 
+### ACLCACHE_CHUNK_SIZE
+Set the max memcached item slice size. File size that are larger than this size will be
+sliced.
 
 Known limitations
 -----------------

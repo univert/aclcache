@@ -5,7 +5,7 @@ from pymemcache.serde import (python_memcache_serializer,
                               python_memcache_deserializer)
 
 from .__main__ import CacheFileStrategy, Manifest, printTraceStatement, CompilerArtifacts, \
-    CACHE_COMPILER_OUTPUT_STORAGE_CODEC
+    CACHE_COMPILER_OUTPUT_STORAGE_CODEC, FILE_CHUNK_SIZE
 from .memcached import memcached_client, memcached_hashclient
 
 class CacheDummyLock:
@@ -88,6 +88,7 @@ class CacheMemcacheStrategy:
         s += ','.join(['{}:{}'.format(*x) for x in self.server()])
         if self.compress:
             s += f"[{self.compress},level:{self.compress_level}]"
+        s += f'<chunk size:{FILE_CHUNK_SIZE}>'
         return s
 
     @property
