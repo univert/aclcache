@@ -22,6 +22,7 @@ class big_file_descriptor:
     hashes: List[str] = None;
 
     def __post_init__(self):
+        self.block_size = FILE_CHUNK_SIZE
         if not self.hashes:
             self.hashes = []
 
@@ -44,7 +45,7 @@ class big_file_descriptor:
 
 
 def retry(func):
-    count =3
+    count =0
     def mfunc(*args, **kargs):
         i = 0
         while True:
@@ -62,7 +63,7 @@ class memcached_client(Client):
         super(memcached_client, self).__init__(server, ignore_exc=False,
                         serializer=python_memcache_serializer,
                         deserializer=python_memcache_deserializer,
-                        timeout=60,
+                        timeout=20,
                         connect_timeout=15,
                         key_prefix='', encoding='utf-8')
         self.compressor = compressor
@@ -153,7 +154,7 @@ class memcached_hashclient(HashClient):
         super(memcached_hashclient, self).__init__(server, ignore_exc=False,retry_attempts=99999,
                         serializer=python_memcache_serializer,
                         deserializer=python_memcache_deserializer,
-                        timeout=60,
+                        timeout=20,
                         connect_timeout=15,
                         key_prefix=b'', encoding='utf-8', allow_unicode_keys=True)
         self.compressor = compressor
@@ -317,7 +318,23 @@ def populate(folder):
 
 
 def test1(*args):
-    client = memcached_client('10.41.90.115:8080')
+    global FILE_CHUNK_SIZE
+    client = memcached_hashclient(['10.148.250.122:55555'])
+    keys = ['86c665d8b7dbbf95c4940fe333333f4e85c88d', 'b0d55be85b2db8fae9152288a900b04f', 'cc050d1c827c0f773f9c507a54ef9541', 'e92ed5898f6c6520d60001d0fd6e19a4', '8c254a50d99887799471e131fc6a2bc4', '2db7c10404b9bc16ae92a6164a6dde6e']
+    for k in keys:
+        try:
+            FILE_CHUNK_SIZE = 10 * 1024*1024 - 256
+            ss = client.fetch_file(k)
+            ss = client.set(k, b'a' * (10 * 1024*1024 - 256 ), noreply=False)
+            ss =client.touch(k, noreply=False)
+            ss = client.get(k)
+            print(k)
+        except Exception as e:
+            print(traceback.format_exc())
+            print(k)
+            break
+        pass
+
     r = client.fetch('47a85552ac4d48aec4a0a02ab538bce7')
     print(r)
     #r = client.fetch_file('b70d4d9bd1fb316aca1ded8a6f31a7c5Z')
@@ -325,7 +342,7 @@ def test1(*args):
     '''91d7b08e677cb563f58b53c87d98a49cZ'''
 
 def main():
-    return test1(sys.argv[2])
+    return test1()
 
 
 if __name__ == '__main__':
