@@ -2282,6 +2282,8 @@ class hash_files_mixin:
             except OSError as err:
                 if err.errno == 22 and err.winerror == 1 and os.path.islink(file):
                    stat = os.stat(os.readlink(file))
+                else:
+                   raise IncludeNotFoundException
             except:
                 raise IncludeNotFoundException
             try:
