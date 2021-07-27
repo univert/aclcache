@@ -7,11 +7,12 @@
 clcache.spec
 /build
 /dist
-/venv
-/.venv
+/venv*
+/.venv*
 /publish/*.nupkg
 .vs/
 .idea/
 /extension/obj/
 /extension/bin
 __pycache__/
+tests/winapp/x64
