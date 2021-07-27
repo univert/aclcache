@@ -40,10 +40,10 @@ Currently aclcache support the following functionalities:
 
 ### Runtime requirements
 
-- MSVC 14.2+
+- MSVC 14.2+ (Visual Studio 2019 16.0+)
 - .NET Framework 4.7.2+
 - MSBuild 16.0+
-- python 3.7.* (64 bit)
+- python 3.7+ (64 bit)
 
 Enable aclcache in your dev environment
 --------------------------------------------------
@@ -57,7 +57,7 @@ Enable aclcache in your dev environment
 set ACLCACHE_MODE=3
 set ACLCACHE_DIR=<cache location e.g. c:\aclcache>
 set ACLCACHE_SIZE=<max cache size in GB, 100 recommended>
-set ACLCACHE_PYTHON=<python 3.7 64bit installation directory e.g. C:\python37 >
+set ACLCACHE_PYTHON=<python 3.7+ 64bit installation directory e.g. C:\python37 >
 cd <aclcache_folder>
 initialize.bat
 ```
