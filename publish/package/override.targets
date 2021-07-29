@@ -79,6 +79,10 @@
         <MASM  Condition="$(_USEBREPRO) == '1'">
            <AdditionalOptions>%(AdditionalOptions) /Brepro</AdditionalOptions>
         </MASM>
+        <!--shader compiler with debug info is not deterministic-->
+        <FxCompile Condition="$(_USEBREPRO) == '1'">
+           <EnableDebuggingInformation>false</EnableDebuggingInformation>
+        </FxCompile>
     </ItemDefinitionGroup>
   <PropertyGroup  Condition="$(_FORCEREBUILD) == '1'">
       <ForceRebuild>true</ForceRebuild>
