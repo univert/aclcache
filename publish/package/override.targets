@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <UsingTask TaskName="AcadExtension.TimerTask" AssemblyFile="bin\AcadExtension.dll"/>
+    <UsingTask TaskName="RegexFileUpdate" AssemblyFile="bin\AcadExtension.dll"/>
+    <PropertyGroup Condition="$(_USECCACHE) != ''">
+      <_USENOPCH>1</_USENOPCH>
+      <_USENOPDB>1</_USENOPDB>
+      <_USEBREPRO>1</_USEBREPRO>
+    </PropertyGroup>
+    <ItemDefinitionGroup Condition="$(_USENOPCH) == '1'">
+      <ClCompile>
+        <PrecompiledHeader>NotUsing</PrecompiledHeader>
+        <PrecompiledHeaderFile></PrecompiledHeaderFile>
+        <PrecompiledHeaderOutputFile></PrecompiledHeaderOutputFile>
+      </ClCompile>
+    </ItemDefinitionGroup>
+    <PropertyGroup>
+      <USRLFLAGS Condition="$(_USENOPDB) == '1'">$(USRLFLAGS.Replace('/PROFILE', ''))</USRLFLAGS> <!--/PROFILE will generate pdb-->
+      <ImpLibAdditionalOptions  Condition="$(_USEBREPRO) == '1'">$(ImpLibAdditionalOptions) /Brepro</ImpLibAdditionalOptions>
+      <_BREPRO  Condition="$(_USEBREPRO) == '1'">/Brepro</_BREPRO>
+      <Deterministic  Condition="$(_USEBREPRO) == '1'">true</Deterministic>
+      <DebugSymbols  Condition="$(_USENOPDB) == '1'">false</DebugSymbols>
+      <DebugType Condition="$(_USENOPDB) == '1'">None</DebugType>
+    </PropertyGroup>
+    <ItemDefinitionGroup>
+        <ClCompile Condition="$(_USENOPDB) == '1'">
+           <DebugInformationFormat>None</DebugInformationFormat>
+           <ProgramDataBaseFileName></ProgramDataBaseFileName>
+           <SupportJustMyCode>false</SupportJustMyCode>
+        </ClCompile>
+        <Link  Condition="$(_USENOPDB) == '1'">
+          <OptimizeReferences Condition="$(MixedMode) != 'true' and '$(Configuration)'=='Debug'">false</OptimizeReferences>
+          <Profile>false</Profile>
+          <GenerateDebugInformation>No</GenerateDebugInformation>
+          <ProgramDatabaseFile></ProgramDatabaseFile>
+          <StripPrivateSymbols></StripPrivateSymbols>
+        </Link>
+        <!--/PROFILE use /BREPRO to produce identical outputs from same source code-->
+        <ClCompile Condition="$(_USEBREPRO) == '1'">
+           <AdditionalOptions>%(AdditionalOptions) /Brepro</AdditionalOptions>
+        </ClCompile>
+        <Link Condition="$(_USEBREPRO) == '1'">
+          <AdditionalOptions>%(AdditionalOptions) /Brepro</AdditionalOptions>
+        </Link>
+        <Lib Condition="$(_USEBREPRO) == '1'">
+          <AdditionalOptions>%(AdditionalOptions) /Brepro</AdditionalOptions>
+        </Lib>
+        <MASM  Condition="$(_USEBREPRO) == '1'">
+           <AdditionalOptions>%(AdditionalOptions) /Brepro</AdditionalOptions>
+        </MASM>
+    </ItemDefinitionGroup>
+  <PropertyGroup  Condition="$(_FORCEREBUILD) == '1'">
+      <ForceRebuild>true</ForceRebuild>
+  </PropertyGroup>
+   <!--These targets are to record compile and linke time seperately-->
+  <Target Name="__Start" BeforeTargets="_PrepareForBuild;BeforeBuild;_PrepareForRebuild">
+    <TimerTask Project="$(MSBuildProjectFullPath)" Reason="Start"/>  
+  </Target>
+  <Target Name="__BeforeResolveReferences" BeforeTargets="BeforeResolveReferences">
+    <TimerTask Project="$(MSBuildProjectFullPath)" Reason="BeforeResolveReferences"/>  
+  </Target>
+  <Target Name="__AfterResolveReferences" AfterTargets="AfterResolveReferences">
+    <TimerTask Project="$(MSBuildProjectFullPath)" Reason="AfterResolveReferences"/>  
+  </Target>
+  <Target Name="__BeforeCompile" BeforeTargets="BuildCompile" AfterTargets="BuildGenerateSources">
+    <TimerTask Project="$(MSBuildProjectFullPath)" Reason="BeforeCompile"/>  
+  </Target>
+  <Target Name="__BeforeLink" BeforeTargets="BuildLink" AfterTargets="BuildCompile">
+    <TimerTask Project="$(MSBuildProjectFullPath)" Reason="BeforeLink"/>  
+  </Target>
+  <Target Name="__AfterLink" AfterTargets="BuildLink">
+    <TimerTask Project="$(MSBuildProjectFullPath)" Reason="AfterLink" File="$(_statlog)"/>  
+  </Target>
+  <Target Name="__BeforeResourceCompile" BeforeTargets="BeforeResourceCompile" Condition="$(_USEBREPRO) == '1'">
+      <ItemGroup>
+        <ResourceCompile>
+           <ImpLibCompiled>false</ImpLibCompiled>
+           <LibCompiled>false</LibCompiled>
+        </ResourceCompile>
+      </ItemGroup>
+  </Target>
+   <!--Remove wildcard version number from AssemblyVersion-->
+  <Target Name="__UpdateAssemblyInfo" BeforeTargets="BeforeCompile" Condition="$(_USEBREPRO) == '1' and $(MSBuildProjectExtension) == '.csproj' and $(TargetPath.ToLower().Contains('bin\apih_bin'))">
+    <ItemGroup>
+      <AssemblyInfo Condition="'%(Filename)' == 'AssemblyInfo'" Include="@(Compile)" />
+    </ItemGroup>
+        <RegexFileUpdate Files="@(AssemblyInfo)" OutDir="$(IntermediateOutputPath)" Regex="\.\*"  ReplacementText=".0">
+           <Output TaskParameter="Files" ItemName="NewAssemblyInfo"/>
+        </RegexFileUpdate>
+    <ItemGroup>
+      <Compile Remove="@(AssemblyInfo)" />
+      <Compile Include="@(NewAssemblyInfo)" />
+    </ItemGroup>
+  </Target>
+</Project>
