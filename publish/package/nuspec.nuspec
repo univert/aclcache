@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='us-ascii'?>
+<ns0:package xmlns:ns0="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <ns0:metadata>
+    <ns0:id>aclcache</ns0:id>
+    <ns0:version>1.0.0</ns0:version>
+    <ns0:authors>aclcache</ns0:authors>
+    <ns0:owners>aclcache</ns0:owners>
+    <ns0:description>Compiler Cache for MSVC</ns0:description>
+  </ns0:metadata>
+  <files>
+    <file exclude="_rels\**;package\**;[Content_Types].xml;*.nuspec" src="**" />
+  </files>
+</ns0:package>
