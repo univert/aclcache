@@ -8,6 +8,7 @@
     <ns0:description>Compiler Cache for MSVC</ns0:description>
   </ns0:metadata>
   <files>
-    <file exclude="_rels\**;package\**;[Content_Types].xml;*.nuspec" src="**" />
+    <file src="..\..\extension\bin\Release\*.dll" target="bin" />
+    <file exclude="**\*.pyc" src="..\..\clcache\**" target="bin\python" />
   </files>
 </ns0:package>
