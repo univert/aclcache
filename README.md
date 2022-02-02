@@ -40,7 +40,7 @@ Currently aclcache support the following functionalities:
 
 ### Runtime requirements
 
-- MSVC 14.2+ (Visual Studio 2019 16.0+)
+- MSVC 14.2+ (Visual Studio 2019 16.0+, Visual Studio 2022 17.0+)
 - .NET Framework 4.7.2+
 - MSBuild 16.0+
 - python 3.7+ (64 bit)

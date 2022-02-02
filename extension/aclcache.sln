@@ -1,0 +1,60 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31912.275
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "aclcache", "aclcache.csproj", "{ADCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}"
+EndProject
+Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "MSBuild", "..\..\..\..\global\Microsoft\VS\2019.16.4\2019\Enterprise\MSBuild\Current\Bin\amd64\MSBuild.exe", "{EFF27366-26B6-4106-92C2-77A8E04A160A}"
+	ProjectSection(DebuggerProjectSystem) = preProject
+		PortSupplier = 00000000-0000-0000-0000-000000000000
+		Executable = C:\global\Microsoft\VS\2019.16.4\2019\Enterprise\MSBuild\Current\Bin\MSBuild.exe
+		RemoteMachine = CT09
+		StartingDirectory = U:\components\global\src\crxapps\regen3
+		Arguments = /t:rebuild
+		Environment = Default
+		LaunchingEngine = fb0d4648-f776-4980-95f8-bb7f36ebc1ee
+		UseLegacyDebugEngines = No
+		LaunchSQLEngine = No
+		AttachLaunchAction = No
+		IORedirection = Auto
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "aclcacheloader", "aclcacheloader.csproj", "{FDCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{ADCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{ADCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{ADCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{ADCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Debug|x64.Build.0 = Debug|Any CPU
+		{ADCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{ADCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Release|Any CPU.Build.0 = Release|Any CPU
+		{ADCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Release|x64.ActiveCfg = Release|Any CPU
+		{ADCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Release|x64.Build.0 = Release|Any CPU
+		{EFF27366-26B6-4106-92C2-77A8E04A160A}.Debug|Any CPU.ActiveCfg = Release|x86
+		{EFF27366-26B6-4106-92C2-77A8E04A160A}.Debug|x64.ActiveCfg = Release|x86
+		{EFF27366-26B6-4106-92C2-77A8E04A160A}.Release|Any CPU.ActiveCfg = Release|x86
+		{EFF27366-26B6-4106-92C2-77A8E04A160A}.Release|x64.ActiveCfg = Release|x86
+		{FDCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FDCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FDCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{FDCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Debug|x64.Build.0 = Debug|Any CPU
+		{FDCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FDCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FDCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Release|x64.ActiveCfg = Release|Any CPU
+		{FDCCCB6D-C7A5-47D2-AEE4-2778E4FF4665}.Release|x64.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {85E6FD82-7ADC-4969-9C01-E9CB7E127164}
+	EndGlobalSection
+EndGlobal
