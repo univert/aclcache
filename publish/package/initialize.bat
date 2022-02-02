@@ -31,6 +31,7 @@ if not exist "%ACLCACHE_PYTHON%\pythonw.exe" (
 doskey aclcache="%ACLCACHE_PYTHON%\python.exe" -E "%ACLCACHE_LOCATION%\aclcache.py" $*
 doskey clcache="%ACLCACHE_PYTHON%\python.exe" -E "%ACLCACHE_LOCATION%\aclcache.py" $*
 
+set ACLCACHE_CMD="%ACLCACHE_PYTHON%\python.exe" -E "%ACLCACHE_LOCATION%\aclcache.py"
 
 if not "%ACLCACHE_SIZE%" == "" (
    "%ACLCACHE_PYTHON%\python.exe" "%ACLCACHE_LOCATION%\aclcache.py" -M %ACLCACHE_SIZE%
