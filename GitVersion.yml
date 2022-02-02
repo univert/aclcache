@@ -1,0 +1,10 @@
+mode: Mainline
+legacy-semver-padding: 0
+branches:
+  pull-request:
+    regex: ^(origin[/-])?wip[/-](.+?)[/-]
+    tag: useBranchName
+    increment: Patch
+ignore:
+  sha: []
+merge-message-formats: {}
