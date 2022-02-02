@@ -30,4 +30,4 @@ function install-devpack ($version, $location) {
   }
 }
 
-install-devpack -version "4.7.2" -location "https://download.microsoft.com/download/3/B/F/3BFB9C35-405D-45DF-BDAF-0EB57D047888/NDP472-DevPack-ENU.exe"
+install-devpack -version "4.7.2" -location "https://download.visualstudio.microsoft.com/download/pr/158dce74-251c-4af3-b8cc-4608621341c8/9c1e178a11f55478e2112714a3897c1a/ndp472-devpack-enu.exe"

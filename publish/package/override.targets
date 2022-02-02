@@ -2,6 +2,7 @@
 <Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
       <AclcacheFilePath Condition="$(AclcacheFilePath) == ''">bin\aclcache.dll</AclcacheFilePath>
+      <AclcacheLoaderFilePath Condition="$(AclcacheLoaderFilePath) == ''">bin\aclcacheloader.dll</AclcacheLoaderFilePath>
     </PropertyGroup>
     <PropertyGroup Condition="$(TargetFramework.StartsWith('netcore'))">
       <ACLCACHE_MODE></ACLCACHE_MODE>
@@ -14,6 +15,8 @@
       <_USENOPDB Condition="$(ACLCACHE_USEZ7) == '' and $(_USENOPDB) == ''">1</_USENOPDB>
       <_USENOPDB Condition="$(ACLCACHE_USEZ7) != ''"></_USENOPDB>
     </PropertyGroup>
+    <UsingTask Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != ''" TaskName="SetEnv" AssemblyFile="$(VCTargetsPath)Microsoft.Build.CppTasks.Common.dll"/>
+    <UsingTask Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != ''" TaskName="AclcacheLoaderTask" AssemblyFile="$(AclcacheLoaderFilePath)"/>
     <UsingTask Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != ''" TaskName="TimerTask" AssemblyFile="$(AclcacheFilePath)"/>
     <UsingTask Condition="$(_USEBREPRO) != ''" TaskName="RegexFileUpdate" AssemblyFile="$(AclcacheFilePath)"/>
     <UsingTask Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != ''" TaskName="CL" AssemblyFile="$(AclcacheFilePath)"/>
@@ -56,7 +59,7 @@
         <Link  Condition="$(_USENOPDB) == '1'">
           <OptimizeReferences Condition="$(MixedMode) != 'true' and '$(Configuration)'=='Debug'">false</OptimizeReferences>
           <Profile>false</Profile>
-          <AdditionalOptions Condition="'$(PlatformToolset)' != 'ClangCl'">%(AdditionalOptions) /nocoffgrpinfo</AdditionalOptions>
+          <AdditionalOptions Condition="'$(PlatformToolset)' == 'v142'">%(AdditionalOptions) /nocoffgrpinfo</AdditionalOptions>
           <GenerateDebugInformation>No</GenerateDebugInformation>
           <ProgramDatabaseFile></ProgramDatabaseFile>
           <StripPrivateSymbols></StripPrivateSymbols>
@@ -88,8 +91,12 @@
       <ForceRebuild>true</ForceRebuild>
   </PropertyGroup>
    <!--These targets are to record compile and linke time seperately-->
-  <Target Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != ''" Name="__Start" BeforeTargets="_PrepareForBuild;BeforeBuild;_PrepareForRebuild;PrepareForBuild">
+  <Target Condition="$(ACLCACHE_MODE) != '' or $(ACLCACHE_STATLOG) != ''" Name="__Start"  DependsOnTargets="__ACLCACHELOADER" BeforeTargets="_PrepareForBuild;BeforeBuild;_PrepareForRebuild;PrepareForBuild">
     <TimerTask Project="$(MSBuildProjectFullPath)" Reason="Start"/>
+  </Target>
+  <Target Name="__ACLCACHELOADER">
+    <SetEnv Value="$(PlatformToolset)" Name="_ACLCACHELOADER" Prefix="false" />
+    <AclcacheLoaderTask />
   </Target>
   <Target Name="__BeforeResourceCompile" BeforeTargets="BeforeResourceCompile" Condition="$(_USEBREPRO) == '1'">
       <ItemGroup>

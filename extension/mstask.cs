@@ -1039,6 +1039,8 @@ namespace Aclcache
             bool r = true;
             if (this.Sources.Length > 0)
             {
+                if (this.BuildEngine.ProjectProperty("PlatformToolset") == "v143")
+                    this.ComputeObjectFiles();
                 r = base.Execute();
                 if (r)
                 {
@@ -1078,7 +1080,8 @@ namespace Aclcache
                 var artifact = _project.CompileArtifactMap[item.ItemSpec];
                 var fullpath = item.GetMetadata("FullPath").ToUpper();
                 System.Diagnostics.Debug.Assert(fullpath == artifact.FullPath);
-                var objfile = Path.GetFullPath(item.GetMetadata("ObjectFile")).ToUpper();
+                var obj_file = item.GetMetadata("ObjectFile");
+                var objfile = Path.GetFullPath(obj_file).ToUpper();
                 System.Diagnostics.Debug.Assert(!string.IsNullOrEmpty(objfile), $"ObjectFile of {item.ItemSpec} has no value");
                 var headers = dep.DependencyTable[fullpath].Keys.Where(x => x != fullpath).ToHashSet();
                 var outputs_all = SourceOutputs.OutputsForSource(item).Select(x => x.ItemSpec).Where(x => NotTLITLH(x)).ToHashSet();

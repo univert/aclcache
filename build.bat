@@ -12,6 +12,7 @@ for /f "usebackq tokens=*" %%i in (`"c:\Program Files (x86)\Microsoft Visual Stu
 )
 call %MSVCDIR%\vcvarsall.bat x86_amd64
 msbuild extension\aclcache.csproj /t:rebuild /p:Configuration=Release /p:Platform=AnyCPU
+msbuild extension\aclcacheloader.csproj /t:rebuild /p:Configuration=Release /p:Platform=AnyCPU
 pushd publish
 call publish.bat %version%
 popd
