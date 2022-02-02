@@ -14,7 +14,7 @@ aclcache - a compiler/linker cache
 What's aclcache
 ---------------
 
-aclcache is a compiling and linking accelarator to Visual C++
+aclcache is a compiling and linking accelarator for Visual C++
  (just like ccache is for gcc & clang). It is a utility tool
 which attempts to avoid unnecessary recompilation by reusing previously
 cached object/binary files if possible.
@@ -40,7 +40,7 @@ Currently aclache support the following functionalities:
 - MSBuild 16.0+
 - python 3.7+
 
-```
+
 
 FAQs
 ----
@@ -67,15 +67,52 @@ you can execute the following command to purge the cache.
 aclcache --clear
 ```
 
-### **How to boost performance of aclcache?**
+### **How to check my cache hit rate?**
 
+You can check cache hit rate by run `aclcache -s` command and there will be three
+columns in the listing. The corresponding meaning of those stats are for complier, static linking and dynamic linking from left to right.
+
+### **How to reset my cache hit rate?**
+
+`aclcache -z`
+
+### **How to enable PDB geneartion?**
+
+Set the following environment variable to generate and caches PDB. Please refer to [Caveats](#caveats) before using this.
 
 ```batch
+set ACLCACHE_USEZ7=1
+```
+
+### **Why is my hit rate so low?**
+
+There can be a number of reasons that hit rate is low
+
+- Switch branch<br/>
+  Branch switching will cause some major header (i.e. id.h) to be different which will effectively invalidate all the cache entries.
+
+- Rebasing commit<br/>
+  Well, this is expected.
+
+
+### **Can the cache folder be shared by different source tree?**
+
+No! The aclcache cache is currently location dependent.
+For example, cache entries gerneated from source code in U: drive will not be picked up
+by building in T: drive even though their content may be equivalent. This is because there are variouse C++ macros like `__FILE__` that makes the generated binary files location dependent and we cannot share them between differnent locations.
+
+### **How to boost performance of aclcache?**
+
+You can set the following environemnt variables to boost performance of aclcache.
+
+```batch
+setx ACLCACHE_HARDLINK 1  [optional: enable hardlink, Please read <<Caveats>> before using this variable]
+setx ACLCACHE_SERVER 1 [optional:enable header hash caching]
 
 If `ACLCACHE_HARDLINK` is set, cached object files won't be copied to their
 final location. Instead, hard links pointing to the cached object files
 will be created. If `ACLCACHE_SERVER` is set, aclcache will use a server process to cache all the header files' hash which will greatly improves performance during
-header file content matching.
+header file content matching. Please read [Caveats](#caveats) before you use these.
 
 
 ### **How to disable aclcache?**
