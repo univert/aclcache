@@ -1110,7 +1110,7 @@ def getFileHashes(filePaths):
 
 def control_server(*code, read = False):
     r = write_pipe('\n'.join(code).encode('utf-8'), b'\x01', read=read)
-    if read:
+    if read and r:
         return r[:-1].decode('utf-8')
 
 
@@ -2157,8 +2157,8 @@ class hash_files_mixin:
         for i in self._pending_add_buffer:
             result.append('|'.join(i))
         if result:
-            printTraceStatement("Add {} files to buffer.".format(len(result)))
-            control_server('add_buffer_hash','\n'.join(result))
+            count = control_server('add_buffer_hash','\n'.join(result), read=True)
+            printTraceStatement("Add {} file to buffer.".format(count))
 
     def get_from_server(self, files: List[str], missing: List = []):
         items = control_server('get_buffer_hash', '\n'.join(files) , read=True).splitlines()

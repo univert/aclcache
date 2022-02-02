@@ -1,9 +1,7 @@
 @echo off
 powershell  -File install_dotnet.ps1
-if defined CI_BRANCH (
-  git branch -f %CI_BRANCH% %CUR_CL% && git checkout -f %CI_BRANCH% || goto :error
-)
-FOR /F "tokens=* USEBACKQ" %%F IN (`tool\gitversion /updateassemblyinfo /showvariable NuGetVersion`) DO (
+
+FOR /F "tokens=* USEBACKQ" %%F IN (`tool\gitversion.exe /updateassemblyinfo /showvariable NuGetVersion`) DO (
 SET version=%%F
 )
 mkdir acadbuildres\results

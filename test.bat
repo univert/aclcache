@@ -10,6 +10,7 @@ for /f "usebackq tokens=*" %%i in (`"c:\Program Files (x86)\Microsoft Visual Stu
 )
 call %MSVCDIR%\vcvarsall.bat x86_amd64
 
+
 set ACLCACHE_MODE=3
 set ACLCACHE_PYTHON=c:\python37
 set ACLCACHE_DIR=C:\aclcache

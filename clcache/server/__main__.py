@@ -152,7 +152,7 @@ class Connection:
         for item in data:
             file, hash = item.split('|')
             self._buffer.add(file, hash)
-        self._onWriteDone(pipe, None)
+        pipe.write(str(len(data)).encode('utf-8') + b'\x00', self._onWriteDone)
 
     def count(self, pipe, data):
         pipe.write( str(self._cache._count).encode('utf-8') + b'\x00', self._onWriteDone )
