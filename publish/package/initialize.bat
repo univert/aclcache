@@ -10,21 +10,17 @@ if "%CustomBeforeMicrosoftCommonTargets%" == "" (
     set CustomBeforeMicrosoftCommonTargets=%~dp0override.targets
 )
 
-if "%ACLCACHE_STATLOG%" == "" (
-   if not "%CI_RES%"=="" if exist "%CI_RES%" set ACLCACHE_STATLOG=%CI_RES%\msbuild_time.csv
-)
-
 if "%ACLCACHE_MODE%"=="" goto END
 
 @ECHO *** aclcache is enabled
-
 
 if "%ACLCACHE_LOCATION%" == "" (
     set ACLCACHE_LOCATION=%~dp0bin
 )
 
-if "%ACLCACHE_PYTHON%" == "" (
-    set ACLCACHE_PYTHON=%ACPACKAGEDIR%\python37
+if not exist "%ACLCACHE_LOCATION%\aclcache.py" (
+    echo "***ACLCACHE_LOCATION does not have aclcache.py installed"
+    goto END
 )
 
 if not exist "%ACLCACHE_PYTHON%\pythonw.exe" (
@@ -35,22 +31,11 @@ if not exist "%ACLCACHE_PYTHON%\pythonw.exe" (
 doskey aclcache="%ACLCACHE_PYTHON%\python.exe" -E "%ACLCACHE_LOCATION%\aclcache.py" $*
 doskey clcache="%ACLCACHE_PYTHON%\python.exe" -E "%ACLCACHE_LOCATION%\aclcache.py" $*
 
-if "%ACLCACHE_DIR%" == "" (
-    set ACLCACHE_DIR=%ACTOP_BIN%\cache
-)
-if "%ACLCACHE_HARDLINK%" == "" (
-    set ACLCACHE_HARDLINK=1
-)
+
 if not "%ACLCACHE_SIZE%" == "" (
    "%ACLCACHE_PYTHON%\python.exe" "%ACLCACHE_LOCATION%\aclcache.py" -M %ACLCACHE_SIZE%
 )
 
-if "%ACLCACHE_LOG%" == "" (
-    if not "%CI_RES%"=="" if exist "%CI_RES%" (
-      set ACLCACHE_LOG=%CI_RES%\aclcache.log
-      del %ACLCACHE_LOG% >nul 2>nul
-    )
-)
 
 if "%ACLCACHE_SERVER%" == "3" (
  @echo Start clcache server
