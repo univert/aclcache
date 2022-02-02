@@ -3,11 +3,12 @@ aclcache - a compiler/linker cache
 
 - [aclcache - a compiler/linker cache](#aclcache---a-compilerlinker-cache)
   - [What's aclcache](#whats-aclcache)
+  - [Enable aclcache in your dev environenment](#enable-aclcache-in-your-dev-environenment)
+  - [Command Line Options](#command-line-options)
   - [FAQs](#faqs)
   - [Environment Variables](#environment-variables)
-  - [Command Line Options](#command-line-options)
   - [Known limitations](#known-limitations)
-  - [How clcache works](#how-clcache-works)
+  - [How aclcache works](#how-aclcache-works)
   - [Caveats](#caveats)
   - [License Terms](#license-terms)
 
@@ -22,7 +23,7 @@ cached object/binary files if possible.
 The tool borrows basic ideas from [clcache][] and enhance
 the functionality of clcache. Aclcache supports compilation scenarios
  previsouly not possible with other compiler cache implementations.
-Currently aclache support the following functionalities:
+Currently aclcache support the following functionalities:
 
 - Precompiled header support for compiler cache:
 - PDB files support
@@ -38,16 +39,58 @@ Currently aclache support the following functionalities:
 - MSVC 14.2+
 - .NET Framework 4.7.2+
 - MSBuild 16.0+
-- python 3.7+
+- python 3.7.* (64 bit)
+
+Enable aclcache in your dev environment
+--------------------------------------------------
+
+1. Download the latest .nupkg release
+
+2. Unzip the package to a folder called aclcache_folder
+
+3. Set environment variables and call aclcache_initialize.bat
+```batch
+set ACLCACHE_MODE=3
+set ACLCACHE_DIR=<cache location>
+set ACLCACHE_SIZE=<max cache size in GB, 100 recommended>
+set ACLCACHE_PYTHON=<python location>
+cd aclcache_folder
+initialize.bat
+```
 
 
+Command Line Options
+--------------------
+
+If aclcache is enabled, you will be able to execute
+the `aclcache` command with the following command line switches
+
+**--help(-h)**<br/>
+    Print usage information
+
+**--stat(-s)**<br/>
+    Print some statistics about the cache (cache hits, cache misses, cache size etc.)
+
+**--clear(-c)**<br/>
+    Clean the cache: remove all cached objects, but keep the cache statistics (hits, misses, etc.).
+
+**--reset(-z)**<br/>
+    Reset the cache statistics, i.e. number of cache hits, cache misses etc..
+    Doesn't actually clear the cache, so the number of cached objects and the
+    cache size will remain unchanged.
+
+**--max(-M) <size>**<br/>
+    Sets the maximum size of the cache in GB.
+
+**--start_svr**<br/>
+    Restart the header hash server process.
 
 FAQs
 ----
 
 ### **How to verify aclcache is enabled?**
 
-If aclache is enabled after you set environment variables and 
+If aclcache is enabled after you set environment variables and 
 call `%ASSEMBLYREF%\aclcache\initialize.bat`, you will be able to execute
 the `aclcache -s` command and see the aclcache configuration and statistics.
 Note that `aclcache` is a doskey command and it expand to appropiate command paths 
@@ -117,7 +160,7 @@ header file content matching. Please read [Caveats](#caveats) before you use the
 
 ### **How to disable aclcache?**
 
-You can remove the `ACLCACHE_MODE` environment variable to disable aclache
+You can remove the `ACLCACHE_MODE` environment variable to disable aclcache
 
 ```batch
 set ACLCACHE_MODE=
@@ -202,31 +245,7 @@ For example, the following override can disable aclcache for mix mode compilatio
     </PropertyGroup>
 </Project>
 ```
-Command Line Options
---------------------
 
-If aclache is enabled, you will be able to execute
-the `aclcache` command with the following command line switches
-
-**--help(-h)**<br/>
-    Print usage information
-
-**--stat(-s)**<br/>
-    Print some statistics about the cache (cache hits, cache misses, cache size etc.)
-
-**--clear(-c)**<br/>
-    Clean the cache: remove all cached objects, but keep the cache statistics (hits, misses, etc.).
-
-**--reset(-z)**<br/>
-    Reset the cache statistics, i.e. number of cache hits, cache misses etc..
-    Doesn't actually clear the cache, so the number of cached objects and the
-    cache size will remain unchanged.
-
-**--max(-M) <size>**<br/>
-    Sets the maximum size of the cache in GB.
-
-**--start_svr**<br/>
-    Restart the header hash server process.
 
 Known limitations
 -----------------
@@ -235,22 +254,22 @@ Known limitations
 
 [INCLUDE and LIBPATH]: https://msdn.microsoft.com/en-us/library/kezkeayy.aspx
 
-How clcache works
+How aclcache works
 -----------------
 
 Aclcache borrows design ideas from both of ccache and clcache. It is important
 that you have basic understanding of [how ccache works] and [how clcache works].
 
-Alcache is both a compiler cache and a linker cache.
+Aclcache is both a compiler cache and a linker cache.
 Aclcache does not work by replacing the compiler like ccache and clcache.
 
 Aclcache consists of three components: 
 
-- aclache.dll: <br/>
+- aclcache.dll: <br/>
   A MSBuild extention that intercepts invokation parameter to compiler and linker and calls aclcache.py to determine hit result.
 - aclcache.py: <br/> 
   A python module that caches the compiler/linker artifacts and return to caller the hit result.
-- aclachesrv.py: <br/>
+- aclcachesrv.py: <br/>
   A background python process that caches the hash of files to boost performance of aclcache such that a particular file does not need to be hashed more than once.
  
 Aclcache is instead designed to intercept calls to cl.exe and linker.exe by a
@@ -259,7 +278,7 @@ and before and after calls to cl.exe and linker.exe.
 
 Aclcache does not call the preprocessor. It works more like the [depend mode of ccache].
 Aclcache uses the tlog files produced by the MSBduild [file tracker] to generate the dependent headers of a particular cpp file. Likewise, it also use tlog files to find out
-the dependent lib files of a particular executble.
+the dependent lib files of a particular executable.
 
 [how ccache works]: https://ccache.dev/manual/latest.html#_how_ccache_works
 [how clcache works]: https://github.com/frerich/clcache#how-clcache-works
