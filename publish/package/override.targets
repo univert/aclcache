@@ -4,7 +4,7 @@
       <AclcacheFilePath Condition="$(AclcacheFilePath) == ''">bin\aclcache.dll</AclcacheFilePath>
       <AclcacheLoaderFilePath Condition="$(AclcacheLoaderFilePath) == ''">bin\aclcacheloader.dll</AclcacheLoaderFilePath>
     </PropertyGroup>
-    <PropertyGroup Condition="$(TargetFramework.StartsWith('netcore'))">
+    <PropertyGroup Condition="$(TargetFramework.StartsWith('net'))">
       <ACLCACHE_MODE></ACLCACHE_MODE>
       <ACLCACHE_STATLOG></ACLCACHE_STATLOG>
       <_USEBREPRO></_USEBREPRO>
