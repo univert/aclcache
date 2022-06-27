@@ -1039,7 +1039,8 @@ namespace Aclcache
             bool r = true;
             if (this.Sources.Length > 0)
             {
-                if (this.BuildEngine.ProjectProperty("PlatformToolset") == "v143")
+                if (this.BuildEngine.ProjectProperty("PlatformToolset") == "v143" 
+                           || this.BuildEngine.ProjectProperty("PlatformToolsetVersion") == "143" )
                     this.ComputeObjectFiles();
                 r = base.Execute();
                 if (r)
